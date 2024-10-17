@@ -12,6 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #define _GNU_SOURCE
 
 #include <signal.h>
@@ -25,6 +26,8 @@
 #include <vlib/threads.h>
 
 #include <vlib/stats/stats.h>
+
+#include <vlib/vlib_pf_wait_queue.h>
 
 u32
 vl (void *p)
@@ -657,18 +660,40 @@ start_workers (vlib_main_t * vm)
 		  vlib_next_frame_t *nf = &nm_clone->next_frames[j];
 		  u32 save_node_runtime_index;
 		  u32 save_flags;
-
+		  u32 save_batch_size = nf->batch_size;
+		  u32 save_timeout_interval = nf->timeout_interval;
+	
 		  save_node_runtime_index = nf->node_runtime_index;
 		  save_flags = nf->flags & VLIB_FRAME_NO_FREE_AFTER_DISPATCH;
 		  vlib_next_frame_init (nf);
 		  nf->node_runtime_index = save_node_runtime_index;
 		  nf->flags = save_flags;
+		  nf->batch_size = save_batch_size;
+		  nf->timeout_interval = save_timeout_interval;
 		}
 
-	      /* fork the frame dispatch queue */
+              /* fork the frame dispatch queue */
+              //       vec_validate (nm_clone->pending_frames, 10);
+              //       vec_set_len (nm_clone->pending_frames, 0);
+              /* pending frames running queue */
+              
+
 	      nm_clone->pending_frames = 0;
-	      vec_validate (nm_clone->pending_frames, 10);
-	      vec_set_len (nm_clone->pending_frames, 0);
+	      nm_clone->pf_waitq = 0;
+	      nm_clone->pf_runq = 0;
+              pool_alloc(nm_clone->pending_frames, 128);
+              pool_validate(nm_clone->pending_frames);
+              vec_validate(nm_clone->pf_runq, 32);
+              vec_set_len(nm_clone->pf_runq, 0);
+	      
+              nm_clone->pf_waitq = clib_mem_alloc_aligned (sizeof (tw_timer_wheel_pf_waitq_t),
+                        CLIB_CACHE_LINE_BYTES);
+
+                /* Create the pf waiting queue timing wheel */
+              tw_timer_wheel_init_pf_waitq(
+                  (tw_timer_wheel_pf_waitq_t*) nm_clone->pf_waitq,
+                  process_expired_pf_cb /* callback */, 10e-6 /* timer period 1us */,
+                  ~0 /* max expirations per call */);
 
 	      /* fork nodes */
 	      nm_clone->nodes = 0;
@@ -884,7 +909,7 @@ worker_thread_node_runtime_update_internal (void)
 	  n = nm_clone->nodes[j];
 
 	  rt = vlib_node_get_runtime (vm_clone, n->index);
-	  vlib_node_runtime_sync_stats (vm_clone, rt, 0, 0, 0);
+	  vlib_node_runtime_sync_stats (vm_clone, rt, 0, 0, 0, 0, 0);
 	}
     }
 
@@ -943,12 +968,16 @@ vlib_worker_thread_node_refork (void)
       vlib_next_frame_t *nf = &nm_clone->next_frames[j];
       u32 save_node_runtime_index;
       u32 save_flags;
+      u32 save_batch_size = nf->batch_size;
+      u32 save_timeout_interval = nf->timeout_interval;
 
       save_node_runtime_index = nf->node_runtime_index;
       save_flags = nf->flags & VLIB_FRAME_NO_FREE_AFTER_DISPATCH;
       vlib_next_frame_init (nf);
       nf->node_runtime_index = save_node_runtime_index;
       nf->flags = save_flags;
+      nf->batch_size = save_batch_size;
+      nf->timeout_interval = save_timeout_interval;
     }
 
   old_nodes_clone = nm_clone->nodes;

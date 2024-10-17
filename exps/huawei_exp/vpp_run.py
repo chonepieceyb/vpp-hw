@@ -6,8 +6,8 @@ import argparse
 # 使用示例：sudo python3 vpp_run.py -c 10,11-12
 
 # vpp和vppctl的路径
-vppctl_binary = "/usr/local/bin/vppctl"
-vpp_binary = "/usr/local/bin/vpp"
+vppctl_binary = "/mnt/disk1/yangbin/CODING/WorkSpace/vpp/vpp-hw/build-root/install-vpp_debug-native/vpp/bin/vppctl"
+vpp_binary = "/mnt/disk1/yangbin/CODING/WorkSpace/vpp/vpp-hw/build-root/install-vpp_debug-native/vpp/bin//vpp"
 
 # dpdk绑定的网卡名
 Ethernet0 = "Ethernet0"

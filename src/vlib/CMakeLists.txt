@@ -89,6 +89,7 @@ add_vpp_library(vlib
   threads_cli.c
   time.c
   trace.c
+  vlib_pf_wait_queue.c
   unix/cli.c
   unix/input.c
   unix/main.c
