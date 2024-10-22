@@ -124,7 +124,8 @@ vlib_node_runtime_update (vlib_main_t * vm, u32 node_index, u32 next_index)
 	}
 
       /* Pending frames may need to be relocated also. */
-      vec_foreach (pf, nm->pending_frames)
+      //vec_foreach (pf, nm->pending_frames)
+      pool_foreach (pf, nm->pending_frames)
       {
 	if (pf->next_frame_index != VLIB_PENDING_FRAME_NO_NEXT_FRAME
 	    && pf->next_frame_index >= i)
@@ -144,6 +145,9 @@ vlib_node_runtime_update (vlib_main_t * vm, u32 node_index, u32 next_index)
   next_node = vlib_get_node (vm, node->next_nodes[next_index]);
   nf = nm->next_frames + r->next_frame_index + next_index;
   nf->node_runtime_index = next_node->runtime_index;
+  
+  nf->batch_size = next_node->batch_size; 
+  nf->timeout_interval = next_node->timeout_us;
 
   vlib_worker_thread_node_runtime_update ();
 }
@@ -429,7 +433,7 @@ vlib_register_node (vlib_main_t *vm, vlib_node_registration_t *r, char *fmt,
 
   if (r->type == VLIB_NODE_TYPE_INTERNAL)
     ASSERT (r->vector_size > 0);
-
+  
 #define _(f) n->f = r->f
 
   _(type);
@@ -439,8 +443,15 @@ vlib_register_node (vlib_main_t *vm, vlib_node_registration_t *r, char *fmt,
   _(unformat_buffer);
   _(format_trace);
   _(validate_frame);
+  _(batch_size);
+  _(timeout_us);
 
   size = round_pow2 (sizeof (vlib_frame_t), VLIB_FRAME_DATA_ALIGN);
+  
+  if (r->batch_size == 0)
+    {
+        n->batch_size = VLIB_FRAME_SIZE;
+    }
 
   /* scalar data size */
   if (r->scalar_size)

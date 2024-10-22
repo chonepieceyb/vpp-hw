@@ -262,6 +262,7 @@ typedef struct vlib_main_t
   /* address sanitizer stack save */
   void *asan_stack_save;
 #endif
+  int barrier_flush;
 } vlib_main_t;
 
 typedef struct vlib_global_main_t
@@ -318,6 +319,8 @@ typedef struct vlib_global_main_t
 
 /* Global main structure. */
 extern vlib_global_main_t vlib_global_main;
+
+
 
 void vlib_worker_loop (vlib_main_t * vm);
 
@@ -457,6 +460,8 @@ vlib_node_runtime_perf_counter (vlib_main_t * vm, vlib_node_runtime_t * node,
       clib_callback_data_call_vec (v, &args);
     }
 }
+
+void barrier_flush_pending_frames(vlib_main_t *vm);
 
 always_inline void vlib_set_queue_signal_callback
   (vlib_main_t * vm, void (*fp) (vlib_main_t *))

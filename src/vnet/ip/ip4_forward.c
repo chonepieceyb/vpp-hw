@@ -111,6 +111,8 @@ VLIB_REGISTER_NODE (ip4_lookup_node) =
   .format_trace = format_ip4_lookup_trace,
   .n_next_nodes = IP_LOOKUP_N_NEXT,
   .next_nodes = IP4_LOOKUP_NEXT_NODES,
+  .batch_size = 128,
+  .timeout_us = 1500
 };
 /* *INDENT-ON* */
 

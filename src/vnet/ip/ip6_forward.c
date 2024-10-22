@@ -2265,6 +2265,8 @@ VLIB_REGISTER_NODE (ip6_rewrite_node) =
     [IP6_REWRITE_NEXT_ICMP_ERROR] = "ip6-icmp-error",
     [IP6_REWRITE_NEXT_FRAGMENT] = "ip6-frag",
   },
+//   .batch_size = 32,
+//   .timeout_us = 30,
 };
 
 VLIB_REGISTER_NODE (ip6_rewrite_bcast_node) = {

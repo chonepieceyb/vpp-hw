@@ -37,6 +37,7 @@
  *  WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include <vlib/vlib_pf_wait_queue.h>
 #include <math.h>
 #include <vppinfra/format.h>
 #include <vlib/vlib.h>
@@ -177,12 +178,18 @@ vlib_put_frame_to_node (vlib_main_t * vm, u32 to_node_index, vlib_frame_t * f)
 
   to_node = vlib_get_node (vm, to_node_index);
 
-  vec_add2 (vm->node_main.pending_frames, p, 1);
+  //vec_add2 (vm->node_main.pending_frames, p, 1);
+  pool_get(vm->node_main.pending_frames, p);
 
   f->frame_flags |= VLIB_FRAME_PENDING;
   p->frame = vlib_get_frame (vm, f);
   p->node_runtime_index = to_node->runtime_index;
   p->next_frame_index = VLIB_PENDING_FRAME_NO_NEXT_FRAME;
+  p->dispatch_start_clock = clib_cpu_time_now ();
+  
+  //clib_warning("+++++++++++ vpp add pending frame to runq, pfi %lu+++++++++++++++++++", p - vm->node_main.pending_frames);
+  /* put_frame_to_node have no next_frame, directly put into runq */
+  vec_add1(vm->node_main.pf_runq, p - vm->node_main.pending_frames);
 }
 
 /* Free given frame. */
@@ -296,7 +303,8 @@ vlib_next_frame_change_ownership (vlib_main_t * vm,
 	  vlib_pending_frame_t *p;
 	  if (next_frame->frame != NULL)
 	    {
-	      vec_foreach (p, nm->pending_frames)
+	      //vec_foreach (p, nm->pending_frames)
+	      pool_foreach(p, nm->pending_frames)
 	      {
 		if (p->frame == next_frame->frame)
 		  {
@@ -369,7 +377,7 @@ vlib_get_next_frame_internal (vlib_main_t * vm,
   /* Allocate new frame if current one is marked as no-append or
      it is already full. */
   n_used = f->n_vectors;
-  if (n_used >= VLIB_FRAME_SIZE || (allocate_new_next_frame && n_used > 0) ||
+  if (n_used >= nf->batch_size || (allocate_new_next_frame && n_used > 0) ||
       (f->frame_flags & VLIB_FRAME_NO_APPEND))
     {
       /* Old frame may need to be freed after dispatch, since we'll have
@@ -383,10 +391,21 @@ vlib_get_next_frame_internal (vlib_main_t * vm,
       /* Allocate new frame to replace full one. */
       f = nf->frame = vlib_frame_alloc (vm, node, next_index);
       n_used = f->n_vectors;
+      
+      /* move full frame from wait queue to runq*/
+      if (PREDICT_TRUE(nf->stop_timer_handler != ~0))
+       {
+	 vlib_node_main_t *nm = &vm->node_main;
+	 tw_timer_pf_waitq_t *pf_timer = pool_elt_at_index (((tw_timer_wheel_pf_waitq_t*)nm->pf_waitq)->timers, nf->stop_timer_handler);
+	 vec_add1 (nm->pf_runq, pf_timer->user_handle);
+	 //clib_warning("++++++++++++ vpp move full frame from wait queue to runq, stop_timer_handler %u, user handler %u", nf->stop_timer_handler, pf_timer->user_handle);
+	 tw_timer_stop_pf_waitq (nm->pf_waitq, nf->stop_timer_handler);
+	 nf->stop_timer_handler = ~0;
+       }
     }
 
   /* Should have free vectors in frame now. */
-  ASSERT (n_used < VLIB_FRAME_SIZE);
+  ASSERT (n_used < nf->batch_size);
 
   if (CLIB_DEBUG > 0)
     {
@@ -451,7 +470,7 @@ vlib_put_next_frame (vlib_main_t * vm,
 
   nf = vlib_node_runtime_get_next_frame (vm, r, next_index);
   f = vlib_get_frame (vm, nf->frame);
-
+  
   /* Make sure that magic number is still there.  Otherwise, caller
      has overrun frame meta data. */
   if (CLIB_DEBUG > 0)
@@ -461,8 +480,10 @@ vlib_put_next_frame (vlib_main_t * vm,
     }
 
   /* Convert # of vectors left -> number of vectors there. */
-  ASSERT (n_vectors_left <= VLIB_FRAME_SIZE);
-  n_vectors_in_frame = VLIB_FRAME_SIZE - n_vectors_left;
+  //ASSERT (n_vectors_left <= VLIB_FRAME_SIZE);
+  //n_vectors_in_frame = VLIB_FRAME_SIZE - n_vectors_left;
+  ASSERT (n_vectors_left <= nf->batch_size);
+  n_vectors_in_frame = nf->batch_size - n_vectors_left;
 
   f->n_vectors = n_vectors_in_frame;
 
@@ -480,13 +501,32 @@ vlib_put_next_frame (vlib_main_t * vm,
 
 	  node = vlib_get_node (vm, r->node_index);
 
-	  vec_add2 (nm->pending_frames, p, 1);
-
+	  //vec_add2 (nm->pending_frames, p, 1);
+	  
+	  pool_get (nm->pending_frames, p);
 	  p->frame = nf->frame;
 	  p->node_runtime_index = nf->node_runtime_index;
 	  p->next_frame_index = nf - nm->next_frames;
+	  p->dispatch_start_clock = clib_cpu_time_now ();
+	  p->is_timeout = 0;
 	  nf->flags |= VLIB_FRAME_PENDING;
 	  f->frame_flags |= VLIB_FRAME_PENDING;
+
+	  //add p to wait queue or run queue 
+	  if (f->n_vectors >= nf->batch_size || nf->timeout_interval == 0 || vm->barrier_flush) {
+		//clib_warning("+++++++++++++vpp add to run queue+++++++++++, pf index %lu, nf index %lu", p - nm->pending_frames,  p->next_frame_index );
+		vec_add1(nm->pf_runq, p - nm->pending_frames);
+		nf->stop_timer_handler = ~0;
+		
+	  } else {
+		f64 now = vlib_time_now(vm);
+		/* check waiting queue */
+	  	tw_timer_expire_timers_pf_waitq(nm->pf_waitq, now);
+		//clib_warning("+++++++++++++vpp add to wait queue +++++++++++, pf index %lu, nf index %lu, time %.6f", p - nm->pending_frames,  p->next_frame_index, now);
+		nf->stop_timer_handler = 
+			tw_timer_start_pf_waitq(nm->pf_waitq, 
+				p - nm->pending_frames, 0, nf->timeout_interval);
+	  } 
 	}
 
       /* Copy trace flag from next_frame and from runtime. */
@@ -509,25 +549,30 @@ vlib_put_next_frame (vlib_main_t * vm,
 void
 vlib_node_runtime_sync_stats_node (vlib_node_t *n, vlib_node_runtime_t *r,
 				   uword n_calls, uword n_vectors,
-				   uword n_clocks)
+				   uword n_clocks, uword dispatch_clocks, int is_timeout)
 {
   n->stats_total.calls += n_calls + r->calls_since_last_overflow;
   n->stats_total.vectors += n_vectors + r->vectors_since_last_overflow;
   n->stats_total.clocks += n_clocks + r->clocks_since_last_overflow;
+  n->stats_total.dispatch_clocks += dispatch_clocks + r->dispatch_clocks_since_last_overflow;
+  if (is_timeout)
+	  n->stats_total.dispatch_timeout += n_calls + r->dispatch_timeout_since_last_overflow;
   n->stats_total.max_clock = r->max_clock;
   n->stats_total.max_clock_n = r->max_clock_n;
-
+  
   r->calls_since_last_overflow = 0;
   r->vectors_since_last_overflow = 0;
   r->clocks_since_last_overflow = 0;
+  r->dispatch_clocks_since_last_overflow = 0;
+  r->dispatch_timeout_since_last_overflow = 0;
 }
 
 void
 vlib_node_runtime_sync_stats (vlib_main_t *vm, vlib_node_runtime_t *r,
-			      uword n_calls, uword n_vectors, uword n_clocks)
+			      uword n_calls, uword n_vectors, uword n_clocks, uword dispatch_clocks, int is_timeout)
 {
   vlib_node_t *n = vlib_get_node (vm, r->node_index);
-  vlib_node_runtime_sync_stats_node (n, r, n_calls, n_vectors, n_clocks);
+  vlib_node_runtime_sync_stats_node (n, r, n_calls, n_vectors, n_clocks, dispatch_clocks, is_timeout);
 }
 
 always_inline void __attribute__ ((unused))
@@ -537,7 +582,7 @@ vlib_process_sync_stats (vlib_main_t * vm,
 {
   vlib_node_runtime_t *rt = &p->node_runtime;
   vlib_node_t *n = vlib_get_node (vm, rt->node_index);
-  vlib_node_runtime_sync_stats (vm, rt, n_calls, n_vectors, n_clocks);
+  vlib_node_runtime_sync_stats (vm, rt, n_calls, n_vectors, n_clocks, 0, 0);
   n->stats_total.suspends += p->n_suspends;
   p->n_suspends = 0;
 }
@@ -563,7 +608,7 @@ vlib_node_sync_stats (vlib_main_t * vm, vlib_node_t * n)
       vec_elt_at_index (vm->node_main.nodes_by_type[n->type],
 			n->runtime_index);
 
-  vlib_node_runtime_sync_stats (vm, rt, 0, 0, 0);
+  vlib_node_runtime_sync_stats (vm, rt, 0, 0, 0, 0, 0);
 
   /* Sync up runtime next frame vector counters with main node structure. */
   {
@@ -583,21 +628,29 @@ always_inline u32
 vlib_node_runtime_update_stats (vlib_main_t * vm,
 				vlib_node_runtime_t * node,
 				uword n_calls,
-				uword n_vectors, uword n_clocks)
+				uword n_vectors, uword n_clocks, uword dispatch_clocks, int is_timeout)
 {
-  u32 ca0, ca1, v0, v1, cl0, cl1, r;
+  u32 ca0, ca1, v0, v1, cl0, cl1, r, dc0, dc1, to0, to1;
 
   cl0 = cl1 = node->clocks_since_last_overflow;
   ca0 = ca1 = node->calls_since_last_overflow;
   v0 = v1 = node->vectors_since_last_overflow;
+  dc0 = dc1 = node->dispatch_clocks_since_last_overflow;
+  to0 = to1 = node->dispatch_timeout_since_last_overflow;
 
   ca1 = ca0 + n_calls;
   v1 = v0 + n_vectors;
   cl1 = cl0 + n_clocks;
+  dc1 = dc0 + dispatch_clocks;
+  if (is_timeout)
+    to1 = to0 + n_calls;
 
+  
   node->calls_since_last_overflow = ca1;
   node->clocks_since_last_overflow = cl1;
   node->vectors_since_last_overflow = v1;
+  node->dispatch_clocks_since_last_overflow = dc1;
+  node->dispatch_timeout_since_last_overflow = to1;
 
   node->max_clock_n = node->max_clock > n_clocks ?
     node->max_clock_n : n_vectors;
@@ -605,13 +658,15 @@ vlib_node_runtime_update_stats (vlib_main_t * vm,
 
   r = vlib_node_runtime_update_main_loop_vector_stats (vm, node, n_vectors);
 
-  if (PREDICT_FALSE (ca1 < ca0 || v1 < v0 || cl1 < cl0))
+  if (PREDICT_FALSE (ca1 < ca0 || v1 < v0 || cl1 < cl0 || dc0 < dc1 || to0 < to1))
     {
       node->calls_since_last_overflow = ca0;
       node->clocks_since_last_overflow = cl0;
       node->vectors_since_last_overflow = v0;
+      node->dispatch_clocks_since_last_overflow = dc0;
+      node->dispatch_timeout_since_last_overflow = to0;
 
-      vlib_node_runtime_sync_stats (vm, node, n_calls, n_vectors, n_clocks);
+      vlib_node_runtime_sync_stats (vm, node, n_calls, n_vectors, n_clocks, dispatch_clocks, is_timeout);
     }
 
   return r;
@@ -623,7 +678,7 @@ vlib_process_update_stats (vlib_main_t * vm,
 			   uword n_calls, uword n_vectors, uword n_clocks)
 {
   vlib_node_runtime_update_stats (vm, &p->node_runtime,
-				  n_calls, n_vectors, n_clocks);
+				  n_calls, n_vectors, n_clocks, 0, 0);
 }
 
 static clib_error_t *
@@ -886,7 +941,7 @@ dispatch_node (vlib_main_t * vm,
 	       vlib_node_runtime_t * node,
 	       vlib_node_type_t type,
 	       vlib_node_state_t dispatch_state,
-	       vlib_frame_t * frame, u64 last_time_stamp)
+	       vlib_frame_t * frame, u64 last_time_stamp, u64 dispatch_start, int is_timeout)
 {
   uword n, v;
   u64 t;
@@ -963,6 +1018,10 @@ dispatch_node (vlib_main_t * vm,
     }
 
   t = clib_cpu_time_now ();
+  
+  if (dispatch_start == ~0)
+    dispatch_start = t;
+
 
   vlib_node_runtime_perf_counter (vm, node, frame, n, t,
 				  VLIB_NODE_RUNTIME_PERF_AFTER);
@@ -975,7 +1034,8 @@ dispatch_node (vlib_main_t * vm,
   v = vlib_node_runtime_update_stats (vm, node,
 				      /* n_calls */ 1,
 				      /* n_vectors */ n,
-				      /* n_clocks */ t - last_time_stamp);
+				      /* n_clocks */ t - last_time_stamp,
+				      /* dispatch clocks*/ t - dispatch_start, is_timeout);
 
   /* When in adaptive mode and vector rate crosses threshold switch to
      polling mode and vice versa. */
@@ -1068,6 +1128,7 @@ static u64
 dispatch_pending_node (vlib_main_t * vm, uword pending_frame_index,
 		       u64 last_time_stamp)
 {
+  //clib_warning("+++++++++++++++++vpp start dispatch pending node pf index %lu++++++++++++++", pending_frame_index);
   vlib_node_main_t *nm = &vm->node_main;
   vlib_frame_t *f;
   vlib_next_frame_t *nf, nf_placeholder;
@@ -1076,11 +1137,14 @@ dispatch_pending_node (vlib_main_t * vm, uword pending_frame_index,
   vlib_pending_frame_t *p;
 
   /* See comment below about dangling references to nm->pending_frames */
-  p = nm->pending_frames + pending_frame_index;
+  //p = nm->pending_frames + pending_frame_index;
+  p = pool_elt_at_index(nm->pending_frames, pending_frame_index);
 
   n = vec_elt_at_index (nm->nodes_by_type[VLIB_NODE_TYPE_INTERNAL],
 			p->node_runtime_index);
+  //u8 *node_name =  vlib_get_node(vm, n->node_index)->name;
 
+  //clib_warning("+++++++++++++++++vpp dispatch pending node pf index %lu, node runtime index %lu, node name %v ++++++++++++++", pending_frame_index, p->node_runtime_index, node_name);
   f = vlib_get_frame (vm, p->frame);
   if (p->next_frame_index == VLIB_PENDING_FRAME_NO_NEXT_FRAME)
     {
@@ -1090,7 +1154,12 @@ dispatch_pending_node (vlib_main_t * vm, uword pending_frame_index,
       nf->frame = NULL;
     }
   else
-    nf = vec_elt_at_index (nm->next_frames, p->next_frame_index);
+    {
+      nf = vec_elt_at_index (nm->next_frames, p->next_frame_index);
+      if (vm->barrier_flush && nf->stop_timer_handler != ~0) {
+	tw_timer_stop_pf_waitq(nm->pf_waitq, nf->stop_timer_handler);
+      }
+    }
 
   ASSERT (f->frame_flags & VLIB_FRAME_IS_ALLOCATED);
 
@@ -1116,10 +1185,12 @@ dispatch_pending_node (vlib_main_t * vm, uword pending_frame_index,
   n->flags |= (nf->flags & VLIB_FRAME_TRACE) ? VLIB_NODE_FLAG_TRACE : 0;
   nf->flags &= ~VLIB_FRAME_TRACE;
 
+  //clib_warning("+++++++++++++++++vpp before dispatch node  pf index %lu, node runtime index %lu, node_name %v++++++++++++++", pending_frame_index, p->node_runtime_index, node_name);
   last_time_stamp = dispatch_node (vm, n,
 				   VLIB_NODE_TYPE_INTERNAL,
 				   VLIB_NODE_STATE_POLLING,
-				   f, last_time_stamp);
+				   f, last_time_stamp, p->dispatch_start_clock, p->is_timeout);
+  //clib_warning("+++++++++++++++++vpp after dispatch node  pf index %lu, node runtime index %lu, node_name %v++++++++++++++", pending_frame_index, p->node_runtime_index, node_name);
   /* Internal node vector-rate accounting, for summary stats */
   vm->internal_node_vectors += f->n_vectors;
   vm->internal_node_calls++;
@@ -1149,7 +1220,8 @@ dispatch_pending_node (vlib_main_t * vm, uword pending_frame_index,
        * of new frames, and hence in the reallocation of nm->pending_frames.
        * Recompute p, or no supper. This was broken for more than 10 years.
        */
-      p = nm->pending_frames + pending_frame_index;
+      //p = nm->pending_frames + pending_frame_index;
+      p = pool_elt_at_index(nm->pending_frames, pending_frame_index);
 
       /*
        * p->next_frame_index can change during node dispatch if node
@@ -1181,8 +1253,38 @@ dispatch_pending_node (vlib_main_t * vm, uword pending_frame_index,
 	  vlib_frame_free (vm, f);
 	}
     }
+    
+  /* free pending frames to poll */
+  pool_put_index(nm->pending_frames, pending_frame_index);
 
   return last_time_stamp;
+}
+
+void barrier_flush_pending_frames(vlib_main_t *vm)
+{
+  vlib_node_main_t *nm = &vm->node_main;
+  u64 cpu_time_now;
+  vm->barrier_flush = 1; 
+      
+  /* pf_runq is NULL */
+  
+  tw_timer_pf_waitq_t *pf_timer;
+  cpu_time_now = clib_cpu_time_now ();
+  pool_foreach(pf_timer, ((tw_timer_wheel_pf_waitq_t*) nm->pf_waitq)->timers)
+    {
+	if (pf_timer->user_handle != ~0) 
+	  {
+	     cpu_time_now = dispatch_pending_node (vm, pf_timer->user_handle, cpu_time_now);
+	  }
+    }
+
+  uword i = 0;
+  for (; i < _vec_len (nm->pf_runq); i++) 
+    {
+	cpu_time_now = dispatch_pending_node (vm, nm->pf_runq[i], cpu_time_now);
+    }
+  vec_set_len(nm->pf_runq, 0);
+  vm->barrier_flush = 0; 
 }
 
 always_inline uword
@@ -1454,12 +1556,24 @@ vlib_main_or_worker_loop (vlib_main_t * vm, int is_main)
   f64 now;
   vlib_frame_queue_main_t *fqm;
   u32 frame_queue_check_counter = 0;
-
+  vm->barrier_flush = 0;
   /* Initialize pending node vector. */
   if (is_main)
     {
-      vec_resize (nm->pending_frames, 32);
-      vec_set_len (nm->pending_frames, 0);
+//       vec_resize (nm->pending_frames, 32);
+//       vec_set_len (nm->pending_frames, 0);
+      pool_alloc(nm->pending_frames, 128);
+      pool_validate(nm->pending_frames);
+      vec_validate(nm->pf_runq, 32);
+      vec_set_len(nm->pf_runq, 0);
+      nm->pf_waitq = clib_mem_alloc_aligned (sizeof (tw_timer_wheel_pf_waitq_t),
+					     CLIB_CACHE_LINE_BYTES);
+
+      /* Create the process timing wheel */
+      tw_timer_wheel_init_pf_waitq(
+        (tw_timer_wheel_pf_waitq_t*) nm->pf_waitq,
+        process_expired_pf_cb /* callback */, 10e-6 /* timer period 1us */,
+        ~0 /* max expirations per call */);
     }
 
   /* Mark time of main loop start. */
@@ -1547,7 +1661,7 @@ vlib_main_or_worker_loop (vlib_main_t * vm, int is_main)
 				      VLIB_NODE_TYPE_PRE_INPUT,
 				      VLIB_NODE_STATE_POLLING,
 				      /* frame */ 0,
-				      cpu_time_now);
+				      cpu_time_now, ~0, 0);
 
       if (clib_interrupt_is_any_pending (nm->pre_input_node_interrupts))
 	{
@@ -1561,7 +1675,7 @@ vlib_main_or_worker_loop (vlib_main_t * vm, int is_main)
 		nm->nodes_by_type[VLIB_NODE_TYPE_PRE_INPUT], int_num);
 	      cpu_time_now = dispatch_node (vm, n, VLIB_NODE_TYPE_PRE_INPUT,
 					    VLIB_NODE_STATE_INTERRUPT,
-					    /* frame */ 0, cpu_time_now);
+					    /* frame */ 0, cpu_time_now, ~0, 0);
 	    }
 	}
 
@@ -1571,7 +1685,7 @@ vlib_main_or_worker_loop (vlib_main_t * vm, int is_main)
 				      VLIB_NODE_TYPE_INPUT,
 				      VLIB_NODE_STATE_POLLING,
 				      /* frame */ 0,
-				      cpu_time_now);
+				      cpu_time_now, ~0, 0);
 
       if (PREDICT_TRUE (is_main && vm->queue_signal_pending == 0))
 	vm->queue_signal_callback (vm);
@@ -1588,17 +1702,37 @@ vlib_main_or_worker_loop (vlib_main_t * vm, int is_main)
 				    int_num);
 	      cpu_time_now = dispatch_node (vm, n, VLIB_NODE_TYPE_INPUT,
 					    VLIB_NODE_STATE_INTERRUPT,
-					    /* frame */ 0, cpu_time_now);
+					    /* frame */ 0, cpu_time_now, ~0, 0);
 	    }
 	}
 
       /* Input nodes may have added work to the pending vector.
          Process pending vector until there is nothing left.
          All pending vectors will be processed from input -> output. */
-      for (i = 0; i < _vec_len (nm->pending_frames); i++)
-	cpu_time_now = dispatch_pending_node (vm, i, cpu_time_now);
+      /* TODO to be rewritten*/
+//       for (i = 0; i < _vec_len (nm->pending_frames); i++)
+// 	cpu_time_now = dispatch_pending_node (vm, i, cpu_time_now);
+      i = 0;
+      while (1)
+        {
+	  /* dispatch node */
+	  cpu_time_now = clib_cpu_time_now ();
+	  for (; i < _vec_len (nm->pf_runq); i++) {
+	    //clib_warning("+++++++vpp runq idx %lu pfidx %lu", i, nm->pf_runq[i]);
+	    ASSERT (!pool_is_free_index(nm->pending_frames, nm->pf_runq[i]));
+	    cpu_time_now = dispatch_pending_node (vm, nm->pf_runq[i], cpu_time_now);
+	  }
+	  
+	  /* check waiting queue */
+	  tw_timer_expire_timers_pf_waitq(nm->pf_waitq, vlib_time_now (vm));
+
+	  /* check if some pending frames timeouts*/
+	  if (i == _vec_len (nm->pf_runq))
+	    break;
+        }
       /* Reset pending vector for next iteration. */
-      vec_set_len (nm->pending_frames, 0);
+      //vec_set_len (nm->pending_frames, 0);
+      vec_set_len (nm->pf_runq, 0);
 
       if (is_main)
 	{
@@ -1971,7 +2105,7 @@ vlib_main (vlib_main_t * volatile vm, unformat_input_t * input)
     vgm->init_functions_called = hash_create (0, /* value bytes */ 0);
   if ((error = vlib_call_all_init_functions (vm)))
     goto done;
-
+  
   nm->timing_wheel = clib_mem_alloc_aligned (sizeof (TWT (tw_timer_wheel)),
 					     CLIB_CACHE_LINE_BYTES);
 

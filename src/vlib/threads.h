@@ -16,6 +16,7 @@
 #define included_vlib_threads_h
 
 #include <vlib/main.h>
+#include <vlib/node.h>
 #include <vppinfra/callback.h>
 #include <linux/sched.h>
 
@@ -339,6 +340,8 @@ vlib_worker_thread_barrier_check (void)
       vlib_main_t *vm = vlib_get_main ();
       u32 thread_index = vm->thread_index;
       f64 t = vlib_time_now (vm);
+
+     barrier_flush_pending_frames(vm);
 
       if (PREDICT_FALSE (vec_len (vm->barrier_perf_callbacks) != 0))
 	clib_call_callbacks (vm->barrier_perf_callbacks, vm,
