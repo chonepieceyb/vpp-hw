@@ -275,7 +275,10 @@ u8 intel_bundle_supported (perfmon_bundle_t *b);
      " with the intention that they are more likely to be reused shortly")    \
   _ (0xFE, 0x04, 0, 0, 0, 0x00, IDI_MISC, WB_DOWNGRADE,                       \
      "Counts number of cache lines that are dropped and not written back to " \
-     "L3 as they are deemed to be less likely to be reused shortly")
+     "L3 as they are deemed to be less likely to be reused shortly")          \
+  _ (0x80, 0x02, 0, 0, 0, 0x00, ICACHE, MISS,                                 \
+     "Cycles where a code fetch is stalled due to L1 instruction-cache miss.")
+
 
 typedef enum
 {
