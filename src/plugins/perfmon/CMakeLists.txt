@@ -35,6 +35,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "amd64.*|x86_64.*|AMD64.*")
     intel/bundle/topdown_icelake.c
     intel/bundle/topdown_metrics.c
     intel/bundle/topdown_tremont.c
+    intel/bundle/cache_detail.c
   )
 endif()
 
