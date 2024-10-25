@@ -7,8 +7,8 @@ import argparse
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # vpp和vppctl的路径
-vppctl_binary = os.join(PROJECT_ROOT , "build-root/build-vpp-native/vpp/bin/vppctl")
-vpp_binary = os.join(PROJECT_ROOT, "build-root/build-vpp-native/vpp/bin/vpp")
+vppctl_binary = os.path.join(PROJECT_ROOT , "build-root/build-vpp-native/vpp/bin/vppctl")
+vpp_binary = os.path.join(PROJECT_ROOT, "build-root/build-vpp-native/vpp/bin/vpp")
 
 # 原版vpp的路径
 vppctl_binary_origin = "/mnt/disk1/zhaolunqi/vpp/build-root/install-vpp-native/vpp/bin/vppctl"
