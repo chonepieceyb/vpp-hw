@@ -69,10 +69,9 @@ def get_perf_stats():
         print(f"An error occurred while running the command: {e}")
 
     perf_result = remove_CtrlChars(perf_result)
-        # Use regular expressions to find the section between vpp_wk_0 (1) and vpp_wk_1 (2)
     # Define a pattern to match the section starting with vpp_wk_0 (1) and capture the following lines
     pattern = re.compile(r"vpp_wk_0 \(1\)\s*\n((?:.*\n)*)", re.DOTALL)
-    match = pattern.search(input_string)
+    match = pattern.search(perf_result)
 
     if match:
         # Extract the relevant section
@@ -93,6 +92,7 @@ def get_perf_stats():
                     total_stat[name] = cache_stats
                 else:
                     cache_stats = total_stat[name]
+                print(f"current cache_stats: L1I: {parts[1]}, L1D: {parts[2]}, L2: {parts[3]}, L3: {parts[4]},  name: {parts[0]}")
                 cache_stats.L1I_miss_per_pkt_list.append(float(parts[1]))
                 cache_stats.L1D_miss_per_pkt_list.append(float(parts[2]))
                 cache_stats.L2_miss_per_pkt_list.append(float(parts[3]))
