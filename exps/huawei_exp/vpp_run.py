@@ -5,9 +5,18 @@ import argparse
 
 # 使用示例：sudo python3 vpp_run.py -c 10,11-12
 
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # vpp和vppctl的路径
-vppctl_binary = "/usr/local/bin/vppctl"
-vpp_binary = "/usr/local/bin/vpp"
+vppctl_binary = os.join(PROJECT_ROOT , "build-root/build-vpp-native/vpp/bin/vppctl")
+vpp_binary = os.join(PROJECT_ROOT, "build-root/build-vpp-native/vpp/bin/vpp")
+
+# 原版vpp的路径
+vppctl_binary_origin = "/mnt/disk1/zhaolunqi/vpp/build-root/install-vpp-native/vpp/bin/vppctl"
+vpp_binary_origin = "/mnt/disk1/zhaolunqi/vpp/build-root/install-vpp-native/vpp/bin/vpp"
+
+# 控制nat策略条目的范围
+nat_range1 = 4
+nat_range2 = 255
 
 # dpdk绑定的网卡名
 Ethernet0 = "Ethernet0"
@@ -28,6 +37,8 @@ def help_func():
     print("    -c <core list>       set CPU affinity. Assign VPP main thread to 1st core")
     print("                         in list and place worker threads on other listed cores.")
     print("                         Cores are separated by commas, and worker cores can include ranges.")
+    print("    -b                   use original vpp binary and vppctl binary as baseline")
+    print("    -t                   create a tun device to redirect host packet from vpp to host")
     print()
     print("Example:")
     print("    python3 vpp_run.py -c 1,2-3,6")
@@ -80,11 +91,11 @@ def nat_setup():
     # nat44 forwarding enable
     subprocess.run(["sudo", vppctl_binary, "-s", SOCKFILE, "nat44", "plugin", "enable"])
     subprocess.run(["sudo", vppctl_binary, "-s", SOCKFILE, "set", "int", "nat44", "out", Ethernet1])
-    for i in range(1, 33):
-        for j in range(1, 250):
+    for i in range(1, nat_range1):
+        for j in range(1, nat_range2):
             subprocess.run(["sudo", vppctl_binary, "-s", SOCKFILE, "nat44", "add", "address", f"10.12.{i}.{j}"])
             subprocess.run(["sudo", vppctl_binary, "-s", SOCKFILE, "nat44", "add", "static", "mapping", "local", f"192.82.{i}.{j}", "external", f"10.12.{i}.{j}"])
-        print(f"nat44 address {i*250}/{32*250} configuration successful!")
+        print(f"nat44 address {i*nat_range2}/{(nat_range1-1)*nat_range2} configuration successful!")
     subprocess.run(["sudo", vppctl_binary, "-s", SOCKFILE, "nat44", "forwarding", "enable"])
     print("DNAT configuration successful!")
 
@@ -129,16 +140,32 @@ def setup_iface():
     subprocess.run(["sudo", vppctl_binary, "-s", SOCKFILE, "ip", "route", "add", "::3:1/128", "via", "::2:2", Ethernet1])
     print("IPv4&6 L3 fwd configuration successful!")
 
-    # tap_setup()
-    # nat_setup()
-    # acl_setup()
+    if use_acl:
+        acl_setup()
+    if use_nat:
+        nat_setup()
+    if use_tun:
+        tap_setup()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", "--core", help="set CPU affinity. Assign VPP main thread to 1st core in list and place worker threads on other listed cores. Cores are separated by commas, and worker cores can include ranges.", required=True)
+    parser.add_argument("-b", "--baseline", help="use origin vpp as baseline", required=False, action="store_true")
+    parser.add_argument("-t", "--tun", help="enable tun device to redirect host packet", required=False, action="store_true")
+    parser.add_argument("-a", "--acl", help="enable acl rules setting", required=False, action="store_true")
+    parser.add_argument("-n", "--nat", help="enable nat rules setting", required=False, action="store_true")
     args = parser.parse_args()
 
     core_list = args.core
+    use_baseline = args.baseline
+    use_tun = args.tun
+    use_acl = args.acl
+    use_nat = args.nat
+
+    if use_baseline:
+        vpp_binary = vpp_binary_origin
+        vppctl_binary = vppctl_binary_origin
+        print("- Using original vpp, location at :", vpp_binary)
 
     main_core = None
     worker_core_list = None
@@ -169,13 +196,16 @@ if __name__ == "__main__":
                             dpdk "{{ dev {pcie_addr[0]} {{ name {Ethernet0} num-tx-queues {queues_count} num-rx-queues {queues_count} }} \\
                                     dev {pcie_addr[1]} {{ name {Ethernet1} num-tx-queues {queues_count} num-rx-queues {queues_count} }} }}" \\
                         """
-    # vpp_start_command_with_tun = f"""sudo {vpp_binary} unix "{{ runtime-dir {VPP_RUNTIME_DIR} cli-listen {SOCKFILE} pidfile {VPP_REMOTE_PIDFILE} }}" \\
-    #                         cpu "{{ main-core {main_core} corelist-workers {worker_core} }}" \\
-    #                         plugins "{{ plugin default {{ enable }} plugin dpdk_plugin.so {{ enable }} plugin crypto_native_plugin.so {{ enable }} plugin crypto_openssl_plugin.so {{enable}} plugin ping_plugin.so {{enable}} plugin pppoe_plugin.so {{enable}} plugin nat_plugin.so {{enable}} plugin bufmon.so {{enable}}}}"  \\
-    #                         dpdk "{{ dev {pcie_addr[0]} {{ name {Ethernet0} num-tx-queues {queues_count} num-rx-queues {queues_count} }} \\
-    #                                 dev {pcie_addr[1]} {{ name {Ethernet1} num-tx-queues {queues_count} num-rx-queues {queues_count} }} }}" \\
-    #                         tuntap "{{ enable ethernet name newtap }}"
-    #                     """
+    vpp_start_command_with_tun = f"""sudo {vpp_binary} unix "{{ runtime-dir {VPP_RUNTIME_DIR} cli-listen {SOCKFILE} pidfile {VPP_REMOTE_PIDFILE} }}" \\
+                            cpu "{{ main-core {main_core} corelist-workers {worker_core} }}" \\
+                            plugins "{{ plugin default {{ enable }} plugin dpdk_plugin.so {{ enable }} plugin crypto_native_plugin.so {{ enable }} plugin crypto_openssl_plugin.so {{enable}} plugin ping_plugin.so {{enable}} plugin pppoe_plugin.so {{enable}} plugin nat_plugin.so {{enable}} plugin bufmon.so {{enable}}}}"  \\
+                            dpdk "{{ dev {pcie_addr[0]} {{ name {Ethernet0} num-tx-queues {queues_count} num-rx-queues {queues_count} }} \\
+                                    dev {pcie_addr[1]} {{ name {Ethernet1} num-tx-queues {queues_count} num-rx-queues {queues_count} }} }}" \\
+                            tuntap "{{ enable ethernet name newtap }}"
+                        """
+    if use_tun:
+        vpp_start_command = vpp_start_command_with_tun
+        print("- Using tun device to redirect host packet")
 
     subprocess.run([vpp_start_command], shell=True)
 
