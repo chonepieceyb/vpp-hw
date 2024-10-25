@@ -227,7 +227,7 @@ show_node_graphviz (vlib_main_t * vm,
 
 	      rt = vlib_node_get_runtime (vm_clone, n->index);
 	      /* Sync the stats directly in the duplicated node.*/
-	      vlib_node_runtime_sync_stats_node (nodes[j], rt, 0, 0, 0);
+	      vlib_node_runtime_sync_stats_node (nodes[j], rt, 0, 0, 0, 0, 0);
 	    }
 	}
       vlib_worker_thread_barrier_release (vm);
@@ -388,9 +388,10 @@ format_vlib_node_stats (u8 * s, va_list * va)
   f64 v;
   u8 *ns;
   u8 *misc_info = 0;
-  u64 c, p, l, d;
+  u64 c, p, l, d, dp, to;
   f64 x;
   f64 maxc, maxcn;
+  f64 avg_dp;
   u32 maxn;
   u32 indent;
 
@@ -398,14 +399,15 @@ format_vlib_node_stats (u8 * s, va_list * va)
     {
       if (max)
 	s = format (s,
-		    "%=30s%=17s%=16s%=16s%=16s%=16s",
+		    "%=30s%=17s%=16s%=16s%=16s%=16s%=16s%=16s",
 		    "Name", "Max Node Clocks", "Vectors at Max",
-		    "Max Clocks", "Avg Clocks", "Avg Vectors/Call");
+		    "Max Clocks", "Avg Clocks", "Avg Vectors/Call", 
+        "Avg DPC/Call", "Total DTO");
       else
 	s = format (s,
-		    "%=30s%=12s%=16s%=16s%=16s%=16s%=16s",
+		    "%=30s%=12s%=16s%=16s%=16s%=16s%=16s%=16s%=16s",
 		    "Name", "State", "Calls", "Vectors", "Suspends",
-		    "Clocks", "Vectors/Call");
+		    "Clocks", "Vectors/Call", "Avg DPC/Call", "Total DTO");
       return s;
     }
 
@@ -415,6 +417,8 @@ format_vlib_node_stats (u8 * s, va_list * va)
   c = n->stats_total.calls - n->stats_last_clear.calls;
   p = n->stats_total.vectors - n->stats_last_clear.vectors;
   d = n->stats_total.suspends - n->stats_last_clear.suspends;
+  dp = n->stats_total.dispatch_clocks  - n->stats_last_clear.dispatch_clocks;
+  to = n->stats_total.dispatch_timeout - n->stats_last_clear.dispatch_timeout;
   maxc = (f64) n->stats_total.max_clock;
   maxn = n->stats_total.max_clock_n;
   if (n->stats_total.max_clock_n)
@@ -430,6 +434,11 @@ format_vlib_node_stats (u8 * s, va_list * va)
     x = (f64) l / (f64) c;
   else if (d > 0)
     x = (f64) l / (f64) d;
+  
+  if (c > 0)
+    avg_dp = (f64) dp / (f64) c;
+  else 
+    avg_dp = 0;
 
   if (c > 0)
     v = (double) p / (double) c;
@@ -448,11 +457,11 @@ format_vlib_node_stats (u8 * s, va_list * va)
   ns = n->name;
 
   if (max)
-    s = format (s, "%-30v%=17.2e%=16d%=16.2e%=16.2e%=16.2e",
-		ns, maxc, maxn, maxcn, x, v);
+    s = format (s, "%-30v%=17.2e%=16d%=16.2e%=16.2e%=16.2e%=16.2e%=16d",
+		ns, maxc, maxn, maxcn, x, v, avg_dp, to);
   else
-    s = format (s, "%-30v%=12U%16Ld%16Ld%16Ld%16.2e%16.2f", ns,
-		format_vlib_node_state, vm, n, c, p, d, x, v);
+    s = format (s, "%-30v%=12U%16Ld%16Ld%16Ld%16.2e%16.2f%16.2e%16Ld", ns,
+		format_vlib_node_state, vm, n, c, p, d, x, v, avg_dp, to);
 
   if (ns != n->name)
     vec_free (ns);

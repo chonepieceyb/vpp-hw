@@ -395,6 +395,8 @@ VLIB_REGISTER_NODE (ip4_input_node) = {
 
   .format_buffer = format_ip4_header,
   .format_trace = format_ip4_input_trace,
+  // .batch_size = 128,
+  // .timeout_us = 15,
 };
 
 VLIB_REGISTER_NODE (ip4_input_no_checksum_node) = {

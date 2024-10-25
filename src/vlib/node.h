@@ -158,6 +158,12 @@ typedef struct _vlib_node_registration
   /* Number of next node names that follow. */
   u16 n_next_nodes;
 
+  /* batch size of this node */
+  u32 batch_size; 
+
+  /* timeout us of this node */
+  u32 timeout_us;
+
   /* Constructor link-list, don't ask... */
   struct _vlib_node_registration *next_registration;
 
@@ -226,6 +232,9 @@ typedef struct
 {
   /* Total calls, clock ticks and vector elements processed for this node. */
   u64 calls, vectors, clocks, suspends;
+  /* total dispatch clocks and dispatch timeouts*/
+  u64 dispatch_clocks; 
+  u64 dispatch_timeout;
   u64 max_clock;
   u64 max_clock_n;
 } vlib_node_stats_t;
@@ -361,6 +370,12 @@ typedef struct vlib_node_t
 			 struct vlib_frame_t * f);
   /* for pretty-printing, not typically valid */
   u8 *state_string;
+    
+  /* batch size*/
+  u32 batch_size; 
+
+  /* timeout in us */
+  u32 timeout_us;
 
   /* Node function candidate registration with priority */
   vlib_node_fn_registration_t *node_fn_registrations;
@@ -433,6 +448,15 @@ typedef struct
 
   /* Number of vectors enqueue to this next since last overflow. */
   u32 vectors_since_last_overflow;
+
+  /* batch size*/
+  u32 batch_size; 
+
+  /* timeout interval in ticks*/
+  u64 timeout_interval;
+
+  /* timer handler*/
+  u32 stop_timer_handler;
 } vlib_next_frame_t;
 
 always_inline void
@@ -440,6 +464,7 @@ vlib_next_frame_init (vlib_next_frame_t * nf)
 {
   clib_memset (nf, 0, sizeof (nf[0]));
   nf->node_runtime_index = ~0;
+  nf->stop_timer_handler = ~0;
 }
 
 /* A frame pending dispatch by main loop. */
@@ -453,6 +478,11 @@ typedef struct
 
   /* Start of next frames for this node. */
   u32 next_frame_index;
+
+  int is_timeout;
+  
+  /* start time create this pending frame */
+  u64 dispatch_start_clock;
 
   /* Special value for next_frame_index when there is no next frame. */
 #define VLIB_PENDING_FRAME_NO_NEXT_FRAME ((u32) ~0)
@@ -492,6 +522,14 @@ typedef struct vlib_node_runtime_t
 
   u32 main_loop_count_last_dispatch;	/**< Saved main loop counter of last
 					  dispatch of this node. */
+  
+  u32 dispatch_clocks;   /* total dispatch time of this node */
+
+  u32 dispatch_clocks_since_last_overflow; 
+
+  u32 dispatch_timeout;   /* total dispatch timeout numbers */ 
+
+  u32 dispatch_timeout_since_last_overflow;
 
   u32 main_loop_vector_stats[2];
 
@@ -704,6 +742,12 @@ typedef struct
 
   /* Vector of internal node's frames waiting to be called. */
   vlib_pending_frame_t *pending_frames;
+
+  /* run queue of pending_frames to be dispatched. */
+  u32 *pf_runq;
+
+  /*waiting queue of pending_frames*/
+  void *pf_waitq;
 
   /* Timing wheel for scheduling time-based node dispatch. */
   void *timing_wheel;

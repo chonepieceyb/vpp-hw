@@ -387,9 +387,10 @@ vlib_frame_t *vlib_get_next_frame_internal (vlib_main_t * vm,
     {                                                                         \
       vlib_frame_t *_f = vlib_get_next_frame_internal (                       \
 	(vm), (node), (next_index), (alloc_new_frame));                       \
+      vlib_next_frame_t *_nf = vlib_node_runtime_get_next_frame((vm), (node), (next_index)); \
       u32 _n = _f->n_vectors;                                                 \
       (vectors) = vlib_frame_vector_args (_f) + _n * sizeof ((vectors)[0]);   \
-      (n_vectors_left) = VLIB_FRAME_SIZE - _n;                                \
+      (n_vectors_left) = _nf->batch_size - _n;                                \
     }                                                                         \
   while (0)
 
@@ -401,12 +402,13 @@ vlib_frame_t *vlib_get_next_frame_internal (vlib_main_t * vm,
       vlib_frame_t *_f = vlib_get_next_frame_internal (                       \
 	(vm), (node), (next_index), (alloc_new_frame));                       \
       u32 _n = _f->n_vectors;                                                 \
+      vlib_next_frame_t *_nf = vlib_node_runtime_get_next_frame((vm), (node), (next_index)); \
       (vectors) = vlib_frame_vector_args (_f) + _n * sizeof ((vectors)[0]);   \
       if ((maybe_no_aux) && (_f)->aux_offset == 0)                            \
 	(aux_data) = NULL;                                                    \
       else                                                                    \
 	(aux_data) = vlib_frame_aux_args (_f) + _n * sizeof ((aux_data)[0]);  \
-      (n_vectors_left) = VLIB_FRAME_SIZE - _n;                                \
+      (n_vectors_left) = _nf->batch_size - _n;                                \
     }                                                                         \
   while (0)
 
@@ -1330,10 +1332,10 @@ void vlib_start_process (vlib_main_t * vm, uword process_index);
 void vlib_node_sync_stats (vlib_main_t * vm, vlib_node_t * n);
 void vlib_node_runtime_sync_stats (vlib_main_t *vm, vlib_node_runtime_t *r,
 				   uword n_calls, uword n_vectors,
-				   uword n_clocks);
+				   uword n_clocks, uword dispatch_clocks, int is_timeout);
 void vlib_node_runtime_sync_stats_node (vlib_node_t *n, vlib_node_runtime_t *r,
 					uword n_calls, uword n_vectors,
-					uword n_clocks);
+					uword n_clocks, uword dispatch_clocks, int is_timeout);
 
 /* Node graph initialization function. */
 clib_error_t *vlib_node_main_init (vlib_main_t * vm);

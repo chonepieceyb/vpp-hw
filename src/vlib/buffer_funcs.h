@@ -48,7 +48,7 @@
 #include <vlib/main.h>
 #include <vlib/node.h>
 
-/** \file
+/**
     vlib buffer access methods.
 */
 

@@ -15,14 +15,19 @@ enqueue_one (vlib_main_t *vm, vlib_node_runtime_t *node,
 {
   vlib_frame_bitmap_t match_bmp;
   vlib_frame_t *f;
+  vlib_next_frame_t *nf;
   u32 n_extracted, n_free;
   u32 *to, *to_aux = 0;
 
+  nf = vlib_node_runtime_get_next_frame(vm, node, next_index);
   f = vlib_get_next_frame_internal (vm, node, next_index, 0);
+
+  u32 batch_size = nf->batch_size;
 
   maybe_aux = maybe_aux && f->aux_offset;
 
-  n_free = VLIB_FRAME_SIZE - f->n_vectors;
+  //n_free = VLIB_FRAME_SIZE - f->n_vectors;
+  n_free = batch_size - f->n_vectors;
 
   /* if frame contains enough space for worst case scenario, we can avoid
    * use of tmp */
@@ -73,18 +78,33 @@ enqueue_one (vlib_main_t *vm, vlib_node_runtime_t *node,
 	}
       vlib_put_next_frame (vm, node, next_index, 0);
 
-      /* second frame */
-      u32 n_2nd_frame = n_extracted - n_free;
+      /* rest frames*/
+      u32 n_rest_frame = n_extracted - n_free;
+      
+      while (n_rest_frame >= batch_size) {
+        f = vlib_get_next_frame_internal (vm, node, next_index, 1);
+        to = vlib_frame_vector_args (f);
+	vlib_buffer_copy_indices (to, tmp + n_extracted - n_rest_frame, batch_size);
+        if (maybe_aux)
+	  {
+	    to_aux = vlib_frame_aux_args (f);
+	    vlib_buffer_copy_indices (to_aux, tmp_aux + n_extracted - n_rest_frame, batch_size);
+	  }
+        vlib_put_next_frame (vm, node, next_index, 0);
+	n_rest_frame -= batch_size;
+      }
+
+      /* last frame */
       f = vlib_get_next_frame_internal (vm, node, next_index, 1);
       to = vlib_frame_vector_args (f);
-      vlib_buffer_copy_indices (to, tmp + n_free, n_2nd_frame);
+      vlib_buffer_copy_indices (to, tmp + n_extracted - n_rest_frame, n_rest_frame);
       if (maybe_aux)
 	{
 	  to_aux = vlib_frame_aux_args (f);
-	  vlib_buffer_copy_indices (to_aux, tmp_aux + n_free, n_2nd_frame);
+	  vlib_buffer_copy_indices (to_aux, tmp_aux + n_extracted - n_rest_frame, n_rest_frame);
 	}
       vlib_put_next_frame (vm, node, next_index,
-			   VLIB_FRAME_SIZE - n_2nd_frame);
+			   batch_size - n_rest_frame);
     }
 
   return n_left - n_extracted;
@@ -100,7 +120,7 @@ vlib_buffer_enqueue_to_next_fn_inline (vlib_main_t *vm,
   u32 tmp_aux[VLIB_FRAME_SIZE];
   u32 n_left;
   u16 next_index;
-
+  
   while (count >= VLIB_FRAME_SIZE)
     {
       vlib_frame_bitmap_t used_elt_bmp = {};
