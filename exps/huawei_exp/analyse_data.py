@@ -40,6 +40,13 @@ if __name__ == "__main__":
         curr_list.append(stat['L3_miss_per_pkt'])
         data_list.append(curr_list)
     node_names = [stat['name'] for stat in total_stat]
+
+    #显示所有列
+    pd.set_option('display.max_columns', None)
+    #显示所有行
+    pd.set_option('display.max_rows', None)
+    #设置value的显示长度为100，默认为50
+    pd.set_option('max_colwidth',100)
     table = pd.DataFrame(data_list, columns=["batch", "L1I", "L1D", "L2", "L3"], index=node_names)
     print(table)
 

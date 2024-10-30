@@ -5,9 +5,10 @@ import argparse
 
 # 使用示例：sudo python3 vpp_run.py -c 10,11-12
 
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # vpp和vppctl的路径
-vppctl_binary = "/usr/local/bin/vppctl"
-vpp_binary = "/usr/local/bin/vpp"
+vppctl_binary = os.path.join(PROJECT_ROOT , "build-root/build-vpp-native/vpp/bin/vppctl")
+vpp_binary = os.path.join(PROJECT_ROOT, "build-root/build-vpp-native/vpp/bin/vpp")
 
 # dpdk绑定的网卡名
 Ethernet0 = "Ethernet0"
