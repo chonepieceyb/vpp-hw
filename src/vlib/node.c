@@ -145,9 +145,6 @@ vlib_node_runtime_update (vlib_main_t * vm, u32 node_index, u32 next_index)
   next_node = vlib_get_node (vm, node->next_nodes[next_index]);
   nf = nm->next_frames + r->next_frame_index + next_index;
   nf->node_runtime_index = next_node->runtime_index;
-  
-  nf->batch_size = next_node->batch_size; 
-  nf->timeout_interval = next_node->timeout_us;
 
   vlib_worker_thread_node_runtime_update ();
 }
@@ -601,6 +598,9 @@ vlib_register_node (vlib_main_t *vm, vlib_node_registration_t *r, char *fmt,
     vec_resize (rt->errors, r->n_errors);
     for (i = 0; i < vec_len (rt->errors); i++)
       rt->errors[i] = n->error_heap_index + i;
+
+    rt->batch_size = n->batch_size;
+    rt->timeout_interval = n->timeout_us;
 
     STATIC_ASSERT_SIZEOF (vlib_node_runtime_t, 128);
     ASSERT (vec_len (n->runtime_data) <= VLIB_NODE_RUNTIME_DATA_SIZE);

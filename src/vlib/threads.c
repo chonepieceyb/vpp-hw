@@ -660,16 +660,12 @@ start_workers (vlib_main_t * vm)
 		  vlib_next_frame_t *nf = &nm_clone->next_frames[j];
 		  u32 save_node_runtime_index;
 		  u32 save_flags;
-		  u32 save_batch_size = nf->batch_size;
-		  u32 save_timeout_interval = nf->timeout_interval;
-	
+
 		  save_node_runtime_index = nf->node_runtime_index;
 		  save_flags = nf->flags & VLIB_FRAME_NO_FREE_AFTER_DISPATCH;
 		  vlib_next_frame_init (nf);
 		  nf->node_runtime_index = save_node_runtime_index;
 		  nf->flags = save_flags;
-		  nf->batch_size = save_batch_size;
-		  nf->timeout_interval = save_timeout_interval;
 		}
 
               /* fork the frame dispatch queue */
@@ -968,16 +964,12 @@ vlib_worker_thread_node_refork (void)
       vlib_next_frame_t *nf = &nm_clone->next_frames[j];
       u32 save_node_runtime_index;
       u32 save_flags;
-      u32 save_batch_size = nf->batch_size;
-      u32 save_timeout_interval = nf->timeout_interval;
 
       save_node_runtime_index = nf->node_runtime_index;
       save_flags = nf->flags & VLIB_FRAME_NO_FREE_AFTER_DISPATCH;
       vlib_next_frame_init (nf);
       nf->node_runtime_index = save_node_runtime_index;
       nf->flags = save_flags;
-      nf->batch_size = save_batch_size;
-      nf->timeout_interval = save_timeout_interval;
     }
 
   old_nodes_clone = nm_clone->nodes;

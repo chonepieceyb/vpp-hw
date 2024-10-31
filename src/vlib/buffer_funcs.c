@@ -16,13 +16,15 @@ enqueue_one (vlib_main_t *vm, vlib_node_runtime_t *node,
   vlib_frame_bitmap_t match_bmp;
   vlib_frame_t *f;
   vlib_next_frame_t *nf;
+  vlib_node_runtime_t *rt;
   u32 n_extracted, n_free;
   u32 *to, *to_aux = 0;
 
   nf = vlib_node_runtime_get_next_frame(vm, node, next_index);
   f = vlib_get_next_frame_internal (vm, node, next_index, 0);
+  rt = vlib_next_frame_get_node_runtime (vm, nf);
 
-  u32 batch_size = nf->batch_size;
+  u32 batch_size = rt->batch_size;
 
   maybe_aux = maybe_aux && f->aux_offset;
 
