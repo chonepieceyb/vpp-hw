@@ -337,7 +337,7 @@ vlib_worker_thread_barrier_check (void)
   if (PREDICT_FALSE (*vlib_worker_threads->wait_at_barrier))
     {
       vlib_global_main_t *vgm = vlib_get_global_main ();
-      vlib_main_t *vm = vlib_get_main ();
+      vlib_main_t *vm = vlib_get_main (), *first_vm = vgm->vlib_mains[0];
       u32 thread_index = vm->thread_index;
       f64 t = vlib_time_now (vm);
 
@@ -385,7 +385,7 @@ vlib_worker_thread_barrier_check (void)
 	f64 now;
 	vm->time_offset = 0.0;
 	now = vlib_time_now (vm);
-	vm->time_offset = vgm->vlib_mains[0]->time_last_barrier_release - now;
+	vm->time_offset = first_vm->time_last_barrier_release - now;
 	vm->time_last_barrier_release = vlib_time_now (vm);
       }
 
@@ -442,6 +442,44 @@ vlib_worker_thread_barrier_check (void)
 	  ed = ELOG_TRACK_DATA (&vlib_global_main.elog_main, e, w->elog_track);
 	  ed->thread_index = thread_index;
 	  ed->duration = (int) (1000000.0 * t);
+	}
+
+      if (PREDICT_FALSE (
+	    vec_len (first_vm->batch_config_refresh_required_node_indices) !=
+	    0))
+	{
+	  vlib_node_runtime_t *rt;
+	  vlib_node_t *n;
+	  vlib_process_t *p;
+	  u32 *node_index_p, node_index;
+
+	  vec_foreach (node_index_p,
+		       first_vm->batch_config_refresh_required_node_indices)
+	    {
+	      ASSERT (node_index_p);
+	      node_index = *node_index_p;
+
+	      /* Not using vlib_get_node(), vlib_node_get_runtime() to avoid
+	       * circular dependency */
+
+	      n = vec_elt (vm->node_main.nodes, node_index);
+	      ASSERT (n);
+
+	      if (n->type != VLIB_NODE_TYPE_PROCESS)
+		{
+		  rt = vec_elt_at_index (vm->node_main.nodes_by_type[n->type],
+					 n->runtime_index);
+		}
+	      else
+		{
+		  p = vec_elt (vm->node_main.processes, n->runtime_index);
+		  rt = &p->node_runtime;
+		}
+	      ASSERT (rt);
+
+	      rt->batch_size = n->batch_size;
+	      rt->timeout_interval = n->timeout_us;
+	    }
 	}
 
       if (PREDICT_FALSE (vec_len (vm->barrier_perf_callbacks) != 0))

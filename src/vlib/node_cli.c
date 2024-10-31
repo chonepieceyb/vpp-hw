@@ -925,6 +925,100 @@ VLIB_CLI_COMMAND (set_node_fn_command, static) = {
 };
 /* *INDENT-ON* */
 
+static clib_error_t *
+set_node_batch (vlib_main_t *vm, unformat_input_t *input,
+		vlib_cli_command_t *cmd)
+{
+  clib_error_t *error = 0;
+  u8 *node_name;
+  u32 size, timeout_us;
+  uword *node_index_p;
+  vlib_main_t *first_vm;
+  struct __node_batch_op
+  {
+    u8 *node_name;
+    u32 node_index;
+    vlib_node_t *node;
+    u32 size;
+    u32 timeout_us;
+  } *ops = 0, *op;
+
+  while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
+    {
+      if (!unformat (input, "%s", &node_name))
+	{
+	    error = clib_error_return (0, "expected node name, got `%U'",
+				       format_unformat_error, input);
+	    goto out;
+	}
+
+      if (!unformat (input, "size %u", &size))
+	size = -1;
+      if (!unformat (input, "timeout %u", &timeout_us))
+	timeout_us = -1;
+      if (size == -1 && timeout_us == -1)
+	{
+	    error = clib_error_return (0, "expected size or timeout, got `%U'",
+				       format_unformat_error, input);
+	    goto out;
+	}
+
+      /* FIXME: Value is copied? */
+      vec_add1 (ops, ((struct __node_batch_op){ .node_name = node_name,
+						.size = size,
+						.timeout_us = timeout_us }));
+    }
+
+  if (vec_len (ops) == 0)
+    {
+      error = clib_error_return (0, "expected at least one node to operate");
+      goto out_free_ops;
+    }
+
+  vlib_worker_thread_barrier_sync (vm);
+
+  vec_foreach (op, ops)
+    {
+      node_index_p = hash_get (vm->node_main.node_by_name, op->node_name);
+      if (!node_index_p)
+	{
+	    error =
+	      clib_error_return (0, "node `%s' not found", op->node_name);
+	    goto out_release_barrier;
+	}
+      op->node_index = *node_index_p;
+      op->node = vlib_get_node (vm, op->node_index);
+    }
+
+  first_vm = vlib_get_first_main ();
+  vec_set_len (first_vm->batch_config_refresh_required_node_indices, 0);
+
+  vec_foreach (op, ops)
+    {
+      if (op->size != -1)
+	op->node->batch_size = op->size;
+      if (op->timeout_us != -1)
+	op->node->timeout_us = op->timeout_us;
+      vec_add1 (first_vm->batch_config_refresh_required_node_indices,
+		op->node_index);
+    }
+
+out_release_barrier:
+  vlib_worker_thread_barrier_release (vm);
+out_free_ops:
+  vec_free (ops);
+out:
+  return error;
+}
+
+VLIB_CLI_COMMAND (set_node_batch_command, static) = {
+  .path = "set node batch",
+  .short_help =
+    "set node batch <node-name> [size <size>] [timeout <timeout_us>] "
+    "[<node-name> [size <size>] [timeout <timeout_us>] ...]",
+  .function = set_node_batch,
+};
+
 /* Dummy function to get us linked in. */
 void
 vlib_node_cli_reference (void)
