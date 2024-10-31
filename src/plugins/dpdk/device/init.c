@@ -287,6 +287,25 @@ dpdk_lib_init (dpdk_main_t * dm)
 	  continue;
 	}
 
+        /* setup dyn filed in mbuf used for timestamp record */
+	static const struct rte_mbuf_dynfield tsc_dynfield_desc = {
+		.name = "timestamp_dynfield",
+		.size = sizeof(tsc_t),
+		.align = _Alignof(tsc_t),
+	};
+
+	int tsc_dynfield_offset = rte_mbuf_dynfield_register(&tsc_dynfield_desc);
+	if (tsc_dynfield_offset < 0)
+		rte_exit(EXIT_FAILURE, "Cannot register mbuf field\n");
+
+      dm->conf->tsc_dynfield_offset = tsc_dynfield_offset;
+      /* Convert cpu cycles to time ns */
+      uint64_t cycle_per_second = rte_get_tsc_hz();
+      dm->conf->cycle_per_ns = cycle_per_second / 1000000000;
+      dm->conf->cycle_per_us = cycle_per_second / 1000000;
+      dm->conf->cycle_per_ms = cycle_per_second / 1000;
+      dpdk_log_info("cycle_per_ns: %u, cycle_per_second: %lu", dm->conf->cycle_per_ns, cycle_per_second);
+
       devconf = dpdk_find_startup_config (&di);
 
       /* If device is blacklisted, we should skip it */
