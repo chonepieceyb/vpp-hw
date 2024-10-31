@@ -56,6 +56,14 @@ extern vlib_node_registration_t admin_up_down_process_node;
 
 typedef uint16_t dpdk_portid_t;
 
+/* timestamp field type */
+typedef uint64_t tsc_t;
+
+struct dpdk_lat_t {
+  uint64_t total_latency; /* Total latency of all packets between in and out vpp */
+  uint64_t total_pkts; /* Total packets between in and out vpp */
+};
+
 #define foreach_dpdk_device_flags                                             \
   _ (0, ADMIN_UP, "admin-up")                                                 \
   _ (1, PROMISC, "promisc")                                                   \
@@ -207,6 +215,14 @@ typedef struct
   struct rte_eth_xstat *xstats;
   f64 time_last_stats_update;
 
+  /* timestamp field offset in mbuf, init in init.c#dpdk_lib_init() */
+  int tsc_dynfield_offset;
+  u64 cycle_per_ns;  /* convert CPU cycles to time (ns) */
+  u64 cycle_per_us;  /* convert CPU cycles to time (us) */
+  u64 cycle_per_ms;  /* convert CPU cycles to time (ms) */
+  /* latency calculation used temp store */
+  struct dpdk_lat_t lat_stats;
+
   /* mac address */
   u8 *default_mac_address;
 
@@ -299,6 +315,11 @@ typedef struct
   u32 *blacklist_by_pci_vendor_and_device;
   /* devices blacklist by VMBUS address */
   vlib_vmbus_addr_t *blacklist_by_vmbus_addr;
+  /* timestamp field offset in mbuf */
+  int tsc_dynfield_offset;
+  u64 cycle_per_ns;  /* convert CPU cycles to time (ns) */
+  u64 cycle_per_us;  /* convert CPU cycles to time (us) */
+  u64 cycle_per_ms;  /* convert CPU cycles to time (ms) */
 
 } dpdk_config_main_t;
 

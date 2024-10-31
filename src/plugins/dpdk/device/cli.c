@@ -376,6 +376,119 @@ VLIB_CLI_COMMAND (show_vpe_version_command, static) = {
 };
 /* *INDENT-ON* */
 
+static clib_error_t *
+reset_packets_latency_fn (vlib_main_t * vm,
+			      unformat_input_t * input,
+			      vlib_cli_command_t * cmd)
+{
+  dpdk_main_t *dm = &dpdk_main;
+  dpdk_device_t *xd = dm->devices;
+  vlib_cli_output(vm, "Current cycle_per_ns: %lu", xd->cycle_per_ns);
+  vec_foreach (xd, dm->devices)
+  {
+    xd->lat_stats.total_latency = 0;
+    xd->lat_stats.total_pkts = 0;
+    vlib_cli_output (vm, "[%s] cycles: %lu, pkts: %lu, latency has been reset.", xd->name, xd->lat_stats.total_latency, xd->lat_stats.total_pkts);
+  }
+  return 0;
+}
+
+/*?
+ * This command is used to reset packets average latency measure record.
+ *
+ * @cliexpar
+ * Example of how to display how many DPDK buffer test command has allocated:
+ * @cliexstart{show dpdk latency}
+ * DPDK Version:        DPDK 16.11.0
+ * @cliexend
+?*/
+/* *INDENT-OFF* */
+VLIB_CLI_COMMAND (reset_packets_latency, static) = {
+  .path = "dpdk latency reset",
+  .short_help = "dpdk latency reset",
+  .function = reset_packets_latency_fn,
+};
+/* *INDENT-ON* */
+
+
+static clib_error_t *
+show_packets_latency_fn (vlib_main_t * vm,
+			      unformat_input_t * input,
+			      vlib_cli_command_t * cmd)
+{
+  dpdk_main_t *dm = &dpdk_main;
+  dpdk_device_t *xd = dm->devices;
+
+  vec_foreach (xd, dm->devices)
+  {
+    uint64_t avg_lat = 0;
+
+    if (xd->lat_stats.total_pkts != 0) {
+      avg_lat = xd->lat_stats.total_latency / xd->lat_stats.total_pkts;
+    }
+    vlib_cli_output (vm, "%s [latency] total_lat(ns): %lu, pkts: %lu, avg_lat(ns): %lu", xd->name, xd->lat_stats.total_latency, xd->lat_stats.total_pkts, avg_lat);
+  }
+  return 0;
+}
+
+/*?
+ * This command is used to display the current packets average latency.
+ *
+ * @cliexpar
+ * Example of how to display how many DPDK buffer test command has allocated:
+ * @cliexstart{show dpdk latency}
+ * Ethernet0 [latency] total_lat(ns): 0, pkts: 0, avg_lat(ns): 0
+ * Ethernet1 [latency] total_lat(ns): 237, pkts: 1, avg_lat(ns): 237
+ * @cliexend
+?*/
+/* *INDENT-OFF* */
+VLIB_CLI_COMMAND (show_packets_latency, static) = {
+  .path = "show dpdk latency",
+  .short_help = "show dpdk latency",
+  .function = show_packets_latency_fn,
+};
+/* *INDENT-ON* */
+
+static clib_error_t *
+show_packets_latency_and_reset_fn (vlib_main_t * vm,
+			      unformat_input_t * input,
+			      vlib_cli_command_t * cmd)
+{
+  dpdk_main_t *dm = &dpdk_main;
+  dpdk_device_t *xd = dm->devices;
+
+  vec_foreach (xd, dm->devices)
+  {
+    uint64_t avg_lat = 0;
+
+    if (xd->lat_stats.total_pkts != 0) {
+      avg_lat = xd->lat_stats.total_latency / xd->lat_stats.total_pkts;
+    }
+    vlib_cli_output (vm, "%s [latency] total_lat(ns): %lu, pkts: %lu, avg_lat(ns): %lu", xd->name, xd->lat_stats.total_latency, xd->lat_stats.total_pkts, avg_lat);
+    xd->lat_stats.total_latency = 0;
+    xd->lat_stats.total_pkts = 0;
+  }
+  return 0;
+}
+
+/*?
+ * This command is used to display the current packets average latency and RESET the record.
+ *
+ * @cliexpar
+ * Example of how to display how many DPDK buffer test command has allocated:
+ * @cliexstart{dpdk latency show}
+ * Ethernet0 [latency] total_lat(ns): 0, pkts: 0, avg_lat(ns): 0
+ * Ethernet1 [latency] total_lat(ns): 237, pkts: 1, avg_lat(ns): 237
+ * @cliexend
+?*/
+/* *INDENT-OFF* */
+VLIB_CLI_COMMAND (show_packets_latency_and_reset, static) = {
+  .path = "dpdk latency show",
+  .short_help = "dpdk latency show",
+  .function = show_packets_latency_and_reset_fn,
+};
+/* *INDENT-ON* */
+
 /* Dummy function to get us linked in. */
 void
 dpdk_cli_reference (void)
