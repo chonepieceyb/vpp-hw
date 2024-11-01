@@ -935,11 +935,13 @@ set_node_batch (vlib_main_t *vm, unformat_input_t *input,
   clib_error_t *error = 0;
   vlib_main_t *first_vm;
   vlib_node_t *node;
+  vlib_node_runtime_t *node_runtime;
   u32 node_index, *node_index_p, size, timeout;
   struct __node_batch_op
   {
     u32 node_index;
     vlib_node_t *node;
+    vlib_node_runtime_t *node_runtime;
     u32 size;
     u32 timeout;
   } *ops = 0, *op;
@@ -987,7 +989,18 @@ set_node_batch (vlib_main_t *vm, unformat_input_t *input,
     {
       node = vlib_get_node (vm, op->node_index);
       ASSERT (node);
+
+      /* Copied from vlib_node_get_runtime */
+      if (node->type != VLIB_NODE_TYPE_PROCESS)
+	node_runtime = vec_elt_at_index (
+	  vm->node_main.nodes_by_type[node->type], node->runtime_index);
+      else
+	node_runtime = &vec_elt (vm->node_main.processes, node->runtime_index)
+			  ->node_runtime;
+      ASSERT (node_runtime);
+
       op->node = node;
+      op->node_runtime = node_runtime;
     }
 
   first_vm = vlib_get_first_main ();
@@ -996,9 +1009,16 @@ set_node_batch (vlib_main_t *vm, unformat_input_t *input,
   vec_foreach (op, ops)
     {
       if (op->size != -1)
-	op->node->batch_size = op->size;
+	{
+	  op->node->batch_size = op->size;
+	  op->node_runtime->batch_size = op->size;
+	}
       if (op->timeout != -1)
-	op->node->timeout_us = op->timeout;
+	{
+	  op->node->timeout_us = op->timeout;
+	  op->node_runtime->timeout_interval = op->timeout;
+	}
+
       vec_add1 (first_vm->batch_config_refresh_required_node_indices,
 		op->node_index);
     }

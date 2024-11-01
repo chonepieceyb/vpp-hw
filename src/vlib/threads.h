@@ -450,7 +450,7 @@ vlib_worker_thread_barrier_check (void)
 	    0))
 	{
 	  vlib_node_runtime_t *rt;
-	  vlib_node_t *n;
+	  vlib_node_t *n, *mn;
 	  vlib_process_t *p;
 	  u32 *node_index_p, node_index;
 
@@ -474,6 +474,9 @@ vlib_worker_thread_barrier_check (void)
 	      n = vec_elt (vm->node_main.nodes, node_index);
 	      ASSERT (n);
 
+	      mn = vec_elt (first_vm->node_main.nodes, node_index);
+	      ASSERT (mn);
+
 	      if (n->type != VLIB_NODE_TYPE_PROCESS)
 		{
 		  rt = vec_elt_at_index (vm->node_main.nodes_by_type[n->type],
@@ -491,12 +494,14 @@ vlib_worker_thread_barrier_check (void)
 		  clib_warning (
 		    "refreshing batching config: node %v, index %u, batch "
 		    "size %u -> %u, timeout %uus -> %uus",
-		    n->name, node_index, rt->batch_size, n->batch_size,
-		    rt->timeout_interval, n->timeout_us);
+		    n->name, node_index, n->batch_size, mn->batch_size,
+		    n->timeout_us, mn->timeout_us);
 		}
 
-	      rt->batch_size = n->batch_size;
-	      rt->timeout_interval = n->timeout_us;
+	      n->batch_size = mn->batch_size;
+	      rt->batch_size = mn->batch_size;
+	      n->timeout_us = mn->timeout_us;
+	      rt->timeout_interval = mn->timeout_us;
 	    }
 	}
 
