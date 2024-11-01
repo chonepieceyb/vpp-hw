@@ -703,8 +703,7 @@ VLIB_CLI_COMMAND (clear_node_runtime_command, static) = {
 /* *INDENT-ON* */
 
 static clib_error_t *
-show_node (vlib_main_t * vm, unformat_input_t * input,
-	   vlib_cli_command_t * cmd)
+show_node (vlib_main_t *vm, unformat_input_t *input, vlib_cli_command_t *cmd)
 {
   unformat_input_t _line_input, *line_input = &_line_input;
   clib_error_t *error = 0;
@@ -725,8 +724,8 @@ show_node (vlib_main_t * vm, unformat_input_t * input,
 	;
       else if (unformat (line_input, "verbose"))
 	verbose = 1;
-      else
-	if (unformat (line_input, "%U", unformat_vlib_node, vm, &node_index))
+      else if (unformat (line_input, "%U", unformat_vlib_node, vm,
+			 &node_index))
 	valid_node_name = 1;
       else if (!valid_node_name)
 	error = clib_error_return (0, "unknown node name: '%U'",
@@ -771,9 +770,11 @@ show_node (vlib_main_t * vm, unformat_input_t * input,
   if (n->sibling_of)
     s = format (s, ", sibling-of %s", n->sibling_of);
 
-  vlib_cli_output (vm, "node %v, type %s, state %U, index %d%v\n",
-		   n->name, type_str, format_vlib_node_state, vm, n,
-		   n->index, s);
+  vlib_cli_output (
+    vm,
+    "node %v, type %s, state %U, index %d, batch size %d, timeout %dus%v\n",
+    n->name, type_str, format_vlib_node_state, vm, n, n->index, n->batch_size,
+    n->timeout_us, s);
   vec_reset_length (s);
 
   if (n->node_fn_registrations)
@@ -805,8 +806,8 @@ show_node (vlib_main_t * vm, unformat_input_t * input,
       pn = vec_elt (nm->nodes, n->next_nodes[i]);
 
       if (vec_len (s) == 0)
-	s = format (s, "\n    %10s  %10s  %=30s %8s",
-		    "next-index", "node-index", "Node", "Vectors");
+	s = format (s, "\n    %10s  %10s  %=30s %8s", "next-index",
+		    "node-index", "Node", "Vectors");
 
       s = format (s, "\n    %=10u  %=10u  %=30v %=8llu", i, n->next_nodes[i],
 		  pn->name, vec_elt (n->n_vectors_by_next_node, i));
@@ -821,14 +822,15 @@ show_node (vlib_main_t * vm, unformat_input_t * input,
     {
       int j = 0;
       /* *INDENT-OFF* */
-      clib_bitmap_foreach (i, n->prev_node_bitmap)  {
-	    vlib_node_t *pn = vlib_get_node (vm, i);
-	    if (j++ % 3 == 0)
-	      s = format (s, "\n    ");
-	    s2 = format (s2, "%v (%u)", pn->name, i);
-	    s = format (s, "%-35v", s2);
-	    vec_reset_length (s2);
-	  }
+      clib_bitmap_foreach (i, n->prev_node_bitmap)
+	{
+	  vlib_node_t *pn = vlib_get_node (vm, i);
+	  if (j++ % 3 == 0)
+	    s = format (s, "\n    ");
+	  s2 = format (s2, "%v (%u)", pn->name, i);
+	  s = format (s, "%-35v", s2);
+	  vec_reset_length (s2);
+	}
       /* *INDENT-ON* */
 
       if (vec_len (s) == 0)
@@ -929,42 +931,46 @@ static clib_error_t *
 set_node_batch (vlib_main_t *vm, unformat_input_t *input,
 		vlib_cli_command_t *cmd)
 {
+  unformat_input_t _line_input, *line_input = &_line_input;
   clib_error_t *error = 0;
-  u8 *node_name;
-  u32 size, timeout_us;
-  uword *node_index_p;
   vlib_main_t *first_vm;
+  vlib_node_t *node;
+  u32 node_index, size, timeout_us;
   struct __node_batch_op
   {
-    u8 *node_name;
     u32 node_index;
     vlib_node_t *node;
     u32 size;
     u32 timeout_us;
   } *ops = 0, *op;
 
-  while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
+  if (!unformat_user (input, unformat_line_input, line_input))
+    goto out;
+
+  while (unformat_check_input (line_input) != UNFORMAT_END_OF_INPUT)
     {
-      if (!unformat (input, "%s", &node_name))
+      if (!unformat (line_input, "index %u", &node_index) &&
+	  !unformat (line_input, "%U", unformat_vlib_node, vm, &node_index))
 	{
-	    error = clib_error_return (0, "expected node name, got `%U'",
-				       format_unformat_error, input);
-	    goto out;
+	    error = clib_error_return (
+	      0, "expected valid node name or index, got '%U'",
+	      format_unformat_error, line_input);
+	    goto out_free_line_input;
 	}
 
-      if (!unformat (input, "size %u", &size))
+      if (!unformat (line_input, "size %u", &size))
 	size = -1;
-      if (!unformat (input, "timeout %u", &timeout_us))
+      if (!unformat (line_input, "timeout %u", &timeout_us))
 	timeout_us = -1;
       if (size == -1 && timeout_us == -1)
 	{
-	    error = clib_error_return (0, "expected size or timeout, got `%U'",
-				       format_unformat_error, input);
-	    goto out;
+	    error = clib_error_return (0, "expected size or timeout, got '%U'",
+				       format_unformat_error, line_input);
+	    goto out_free_line_input;
 	}
 
       /* FIXME: Value is copied? */
-      vec_add1 (ops, ((struct __node_batch_op){ .node_name = node_name,
+      vec_add1 (ops, ((struct __node_batch_op){ .node_index = node_index,
 						.size = size,
 						.timeout_us = timeout_us }));
     }
@@ -979,19 +985,13 @@ set_node_batch (vlib_main_t *vm, unformat_input_t *input,
 
   vec_foreach (op, ops)
     {
-      node_index_p = hash_get (vm->node_main.node_by_name, op->node_name);
-      if (!node_index_p)
-	{
-	    error =
-	      clib_error_return (0, "node `%s' not found", op->node_name);
-	    goto out_release_barrier;
-	}
-      op->node_index = *node_index_p;
-      op->node = vlib_get_node (vm, op->node_index);
+      node = vlib_get_node (vm, op->node_index);
+      ASSERT (node);
+      op->node = node;
     }
 
   first_vm = vlib_get_first_main ();
-  vec_set_len (first_vm->batch_config_refresh_required_node_indices, 0);
+  vec_reset_length (first_vm->batch_config_refresh_required_node_indices);
 
   vec_foreach (op, ops)
     {
@@ -1003,19 +1003,21 @@ set_node_batch (vlib_main_t *vm, unformat_input_t *input,
 		op->node_index);
     }
 
-out_release_barrier:
   vlib_worker_thread_barrier_release (vm);
+
 out_free_ops:
   vec_free (ops);
+out_free_line_input:
+  unformat_free (line_input);
 out:
   return error;
 }
 
 VLIB_CLI_COMMAND (set_node_batch_command, static) = {
   .path = "set node batch",
-  .short_help =
-    "set node batch <node-name> [size <size>] [timeout <timeout_us>] "
-    "[<node-name> [size <size>] [timeout <timeout_us>] ...]",
+  .short_help = "set node batch [index] <node-name | node-index> [size "
+		"<size>] [timeout <timeout>] [[index] <node-name | "
+		"node-index> [size <size>] [timeout <timeout>] ...]",
   .function = set_node_batch,
 };
 
