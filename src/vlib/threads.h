@@ -444,6 +444,7 @@ vlib_worker_thread_barrier_check (void)
 	  ed->duration = (int) (1000000.0 * t);
 	}
 
+      /* FIXME: When to clear this vector? */
       if (PREDICT_FALSE (
 	    vec_len (first_vm->batch_config_refresh_required_node_indices) !=
 	    0))
@@ -452,6 +453,14 @@ vlib_worker_thread_barrier_check (void)
 	  vlib_node_t *n;
 	  vlib_process_t *p;
 	  u32 *node_index_p, node_index;
+
+	  if (CLIB_DEBUG > 0)
+	    {
+	      clib_warning (
+		"refreshing batching config: %u node(s) in total",
+		vec_len (
+		  first_vm->batch_config_refresh_required_node_indices));
+	    }
 
 	  vec_foreach (node_index_p,
 		       first_vm->batch_config_refresh_required_node_indices)
@@ -476,6 +485,15 @@ vlib_worker_thread_barrier_check (void)
 		  rt = &p->node_runtime;
 		}
 	      ASSERT (rt);
+
+	      if (CLIB_DEBUG > 0)
+		{
+		  clib_warning (
+		    "refreshing batching config: node %v, index %u, batch "
+		    "size %u -> %u, timeout %uus -> %uus",
+		    n->name, node_index, rt->batch_size, n->batch_size,
+		    rt->timeout_interval, n->timeout_us);
+		}
 
 	      rt->batch_size = n->batch_size;
 	      rt->timeout_interval = n->timeout_us;

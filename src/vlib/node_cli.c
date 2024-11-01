@@ -935,13 +935,13 @@ set_node_batch (vlib_main_t *vm, unformat_input_t *input,
   clib_error_t *error = 0;
   vlib_main_t *first_vm;
   vlib_node_t *node;
-  u32 node_index, size, timeout_us;
+  u32 node_index, *node_index_p, size, timeout;
   struct __node_batch_op
   {
     u32 node_index;
     vlib_node_t *node;
     u32 size;
-    u32 timeout_us;
+    u32 timeout;
   } *ops = 0, *op;
 
   if (!unformat_user (input, unformat_line_input, line_input))
@@ -952,27 +952,27 @@ set_node_batch (vlib_main_t *vm, unformat_input_t *input,
       if (!unformat (line_input, "index %u", &node_index) &&
 	  !unformat (line_input, "%U", unformat_vlib_node, vm, &node_index))
 	{
-	    error = clib_error_return (
-	      0, "expected valid node name or index, got '%U'",
-	      format_unformat_error, line_input);
-	    goto out_free_line_input;
+	  error = clib_error_return (
+	    0, "expected valid node name or index, got '%U'",
+	    format_unformat_error, line_input);
+	  goto out_free_line_input;
 	}
 
       if (!unformat (line_input, "size %u", &size))
 	size = -1;
-      if (!unformat (line_input, "timeout %u", &timeout_us))
-	timeout_us = -1;
-      if (size == -1 && timeout_us == -1)
+      if (!unformat (line_input, "timeout %u", &timeout))
+	timeout = -1;
+      if (size == -1 && timeout == -1)
 	{
-	    error = clib_error_return (0, "expected size or timeout, got '%U'",
-				       format_unformat_error, line_input);
-	    goto out_free_line_input;
+	  error = clib_error_return (0, "expected size or timeout, got '%U'",
+				     format_unformat_error, line_input);
+	  goto out_free_line_input;
 	}
 
       /* FIXME: Value is copied? */
       vec_add1 (ops, ((struct __node_batch_op){ .node_index = node_index,
 						.size = size,
-						.timeout_us = timeout_us }));
+						.timeout = timeout }));
     }
 
   if (vec_len (ops) == 0)
@@ -997,10 +997,26 @@ set_node_batch (vlib_main_t *vm, unformat_input_t *input,
     {
       if (op->size != -1)
 	op->node->batch_size = op->size;
-      if (op->timeout_us != -1)
-	op->node->timeout_us = op->timeout_us;
+      if (op->timeout != -1)
+	op->node->timeout_us = op->timeout;
       vec_add1 (first_vm->batch_config_refresh_required_node_indices,
 		op->node_index);
+    }
+
+  if (CLIB_DEBUG > 0)
+    {
+      clib_warning (
+	"%u nodes in total require batching config refresh",
+	vec_len (first_vm->batch_config_refresh_required_node_indices));
+      vec_foreach (node_index_p,
+		   first_vm->batch_config_refresh_required_node_indices)
+	{
+	  node_index = *node_index_p;
+	  node = vlib_get_node (vm, node_index);
+	  clib_warning ("node %v, index %u, batch size %u, timeout %uus",
+			node->name, node_index, node->batch_size,
+			node->timeout_us);
+	}
     }
 
   vlib_worker_thread_barrier_release (vm);
