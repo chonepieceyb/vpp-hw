@@ -62,9 +62,10 @@ def extract_vpp_wk_0_perf_stats(input_string):
     return stats
 
 def extract_Ethernet1_lat_stats(input_string):
-    pattern = re.compile(r"Ethernet1 \[latency\] total_lat\(ns\): (\d+), pkts: (\d+), timeout_pkts: (\d+), avg_lat\(ns\): (\d+)")
-    match = pattern.search(input_string)
+    pattern1 = re.compile(r"Ethernet1 \[latency\] total_lat\(ns\): (\d+), pkts: (\d+), timeout_pkts: (\d+), avg_lat\(ns\): (\d+), imissed: (\d+)")
+    pattern2 = re.compile(r"Ethernet0 \[latency\] total_lat\(ns\): \d+, pkts: \d+, timeout_pkts: \d+, avg_lat\(ns\): \d+, imissed: (\d+)")
     lat_stats = {}
+    match = pattern1.search(input_string)
     if match:
         lat_stats = {
             "total_lat_ns": int(match.group(1)),
@@ -72,6 +73,9 @@ def extract_Ethernet1_lat_stats(input_string):
             "timeout_pkts": int(match.group(3)),
             "avg_lat_ns": int(match.group(4)),
         }
+    match = pattern2.search(input_string)
+    if match:
+        lat_stats['imissed'] = int(match.group(1))
     return lat_stats
 
 def get_perf_stats():

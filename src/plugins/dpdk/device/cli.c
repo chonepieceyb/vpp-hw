@@ -423,11 +423,12 @@ show_packets_latency_fn (vlib_main_t * vm,
   vec_foreach (xd, dm->devices)
   {
     uint64_t avg_lat = 0;
+    uint64_t imissed = xd->stats.imissed - xd->last_stats.imissed;
 
     if (xd->lat_stats.total_pkts != 0) {
       avg_lat = xd->lat_stats.total_latency / xd->lat_stats.total_pkts;
     }
-    vlib_cli_output (vm, "%s [latency] total_lat(ns): %lu, pkts: %lu, timeout_pkts: %lu, avg_lat(ns): %lu", xd->name, xd->lat_stats.total_latency, xd->lat_stats.total_pkts, xd->lat_stats.timeout_pkts, avg_lat);
+    vlib_cli_output (vm, "%s [latency] total_lat(ns): %lu, pkts: %lu, timeout_pkts: %lu, avg_lat(ns): %lu, imissed: %lu", xd->name, xd->lat_stats.total_latency, xd->lat_stats.total_pkts, xd->lat_stats.timeout_pkts, avg_lat, imissed);
   }
   return 0;
 }
@@ -461,11 +462,11 @@ show_packets_latency_and_reset_fn (vlib_main_t * vm,
   vec_foreach (xd, dm->devices)
   {
     uint64_t avg_lat = 0;
-
+    uint64_t imissed = xd->stats.imissed - xd->last_stats.imissed;
     if (xd->lat_stats.total_pkts != 0) {
       avg_lat = xd->lat_stats.total_latency / xd->lat_stats.total_pkts;
     }
-    vlib_cli_output (vm, "%s [latency] total_lat(ns): %lu, pkts: %lu, timeout_pkts: %lu, avg_lat(ns): %lu", xd->name, xd->lat_stats.total_latency, xd->lat_stats.total_pkts, xd->lat_stats.timeout_pkts, avg_lat);
+    vlib_cli_output (vm, "%s [latency] total_lat(ns): %lu, pkts: %lu, timeout_pkts: %lu, avg_lat(ns): %lu, imissed: %lu", xd->name, xd->lat_stats.total_latency, xd->lat_stats.total_pkts, xd->lat_stats.timeout_pkts, avg_lat, imissed);
     xd->lat_stats.total_latency = 0;
     xd->lat_stats.total_pkts = 0;
     xd->lat_stats.timeout_pkts = 0;
