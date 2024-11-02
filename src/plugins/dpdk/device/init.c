@@ -295,6 +295,7 @@ dpdk_lib_init (dpdk_main_t * dm)
 	};
 
 	int tsc_dynfield_offset = rte_mbuf_dynfield_register(&tsc_dynfield_desc);
+        dpdk_log_debug("tsc_dynfield_offset: %d init at dpdk_lib_init", tsc_dynfield_offset);
 	if (tsc_dynfield_offset < 0)
 		rte_exit(EXIT_FAILURE, "Cannot register mbuf field\n");
 

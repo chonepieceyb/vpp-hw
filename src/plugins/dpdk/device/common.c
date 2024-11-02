@@ -65,9 +65,13 @@ static uint16_t add_timestamps(uint16_t port , uint16_t qidx __rte_unused,
                                struct rte_mbuf **pkts, uint16_t nb_pkts,
                                void *xd) {
   dpdk_device_t *__xd = (dpdk_device_t *)xd;
+  // dpdk_device_t which has hw_if_index = 0 has not been initialized.
+  if(unlikely(__xd->hw_if_index == 0)) {
+    return nb_pkts;
+  }
   unsigned i;
   uint64_t now = rte_rdtsc();
-
+  dpdk_log_debug("tsc_dynfield_offset: %d used at add_timestamps, nic: %d", __xd->tsc_dynfield_offset, __xd->hw_if_index);
   for (i = 0; i < nb_pkts; i++)
     *tsc_field(pkts[i], __xd->tsc_dynfield_offset) = now;
   return nb_pkts;
@@ -79,21 +83,24 @@ static uint16_t calc_latency(uint16_t port, uint16_t qidx __rte_unused,
                              struct rte_mbuf **pkts, uint16_t nb_pkts,
                              void *xd) {
   dpdk_device_t *__xd = (dpdk_device_t *)xd;
-  uint64_t cycles = 0;
+  uint64_t total_latency = 0;
   uint64_t now = rte_rdtsc();
   unsigned i;
 
   for (i = 0; i < nb_pkts; i++) {
     uint64_t packet_ts = *tsc_field(pkts[i], __xd->tsc_dynfield_offset);
-    cycles += now - packet_ts;
-    if (unlikely(now < packet_ts)) {
-      dpdk_log_err("Timestamp in the future, now: %lu, timestamp: %lu", now,
-                   packet_ts);
+    uint64_t packet_latency = now - packet_ts;
+
+    // If the packet_latency is greater than the TIME_OUT_THRESHOULDER_NS, it is considered as timeout.
+    if (packet_latency > TIME_OUT_THRESHOULDER_NS) {
+      __xd->lat_stats.timeout_pkts++;
     }
+    total_latency += packet_latency;
+
   }
 
   /* actually total_latency store the latency time(ns) */
-  __xd->lat_stats.total_latency += cycles / __xd->cycle_per_ns;
+  __xd->lat_stats.total_latency += total_latency / __xd->cycle_per_ns;
   __xd->lat_stats.total_pkts += nb_pkts;
 
   return nb_pkts;
@@ -228,6 +235,7 @@ void dpdk_device_setup(dpdk_device_t *xd) {
 
   /*configuration timestamps, check in dpdk_lib_init*/
   xd->tsc_dynfield_offset = dm->conf->tsc_dynfield_offset;
+  dpdk_log_debug("tsc_dynfield_offset: %d copyed at dpdk_device_setup, nic: %d", xd->tsc_dynfield_offset, xd->hw_if_index);
   xd->cycle_per_ns = dm->conf->cycle_per_ns;
   xd->cycle_per_us = dm->conf->cycle_per_us;
   xd->cycle_per_ms = dm->conf->cycle_per_ms;

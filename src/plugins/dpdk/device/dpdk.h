@@ -56,12 +56,16 @@ extern vlib_node_registration_t admin_up_down_process_node;
 
 typedef uint16_t dpdk_portid_t;
 
+// Timeout packet count thresholder
+#define TIME_OUT_THRESHOULDER_NS 10000
+
 /* timestamp field type */
 typedef uint64_t tsc_t;
 
 struct dpdk_lat_t {
   uint64_t total_latency; /* Total latency of all packets between in and out vpp */
   uint64_t total_pkts; /* Total packets between in and out vpp */
+  uint64_t timeout_pkts; /* latency greater than TIME_OUT_THRESHOULDER_NS packets count */
 };
 
 #define foreach_dpdk_device_flags                                             \
