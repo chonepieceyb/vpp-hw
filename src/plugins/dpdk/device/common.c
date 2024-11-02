@@ -53,9 +53,62 @@ dpdk_device_error (dpdk_device_t * xd, char *str, int rv)
 				  str, xd->port_id, rv, rte_strerror (rv));
 }
 
-void
-dpdk_device_setup (dpdk_device_t * xd)
+static inline rte_mbuf_timestamp_t *
+tsc_field(struct rte_mbuf *mbuf, int offset)
 {
+	return RTE_MBUF_DYNFIELD(mbuf,
+			offset, rte_mbuf_timestamp_t *);
+}
+
+/* Callback added to the RX port and applied to packets. 8< */
+static uint16_t add_timestamps(uint16_t port , uint16_t qidx __rte_unused,
+                               struct rte_mbuf **pkts, uint16_t nb_pkts,
+                               void *xd) {
+  dpdk_device_t *__xd = (dpdk_device_t *)xd;
+  // dpdk_device_t which has hw_if_index = 0 has not been initialized.
+  if(unlikely(__xd->hw_if_index == 0)) {
+    return nb_pkts;
+  }
+  unsigned i;
+  uint64_t now = rte_rdtsc();
+  dpdk_log_debug("tsc_dynfield_offset: %d used at add_timestamps, nic: %d", __xd->tsc_dynfield_offset, __xd->hw_if_index);
+  for (i = 0; i < nb_pkts; i++)
+    *tsc_field(pkts[i], __xd->tsc_dynfield_offset) = now;
+  return nb_pkts;
+}
+/* >8 End of callback addition and application. */
+
+/* Callback is added to the TX port. 8< */
+static uint16_t calc_latency(uint16_t port, uint16_t qidx __rte_unused,
+                             struct rte_mbuf **pkts, uint16_t nb_pkts,
+                             void *xd) {
+  dpdk_device_t *__xd = (dpdk_device_t *)xd;
+  uint64_t total_latency = 0;
+  uint64_t now = rte_rdtsc();
+  unsigned i;
+
+  for (i = 0; i < nb_pkts; i++) {
+    uint64_t packet_ts = *tsc_field(pkts[i], __xd->tsc_dynfield_offset);
+    uint64_t packet_latency = now - packet_ts;
+
+    // If the packet_latency is greater than the TIME_OUT_THRESHOULDER_NS, it is considered as timeout.
+    if (packet_latency > TIME_OUT_THRESHOULDER_NS) {
+      __xd->lat_stats.timeout_pkts++;
+    }
+    total_latency += packet_latency;
+
+  }
+
+  /* actually total_latency store the latency time(ns) */
+  __xd->lat_stats.total_latency += total_latency / __xd->cycle_per_ns;
+  __xd->lat_stats.total_pkts += nb_pkts;
+
+  return nb_pkts;
+}
+/* >8 End of callback addition. */
+
+void dpdk_device_setup(dpdk_device_t *xd) {
+  dpdk_main_t *dm = &dpdk_main;
   vlib_main_t *vm = vlib_get_main ();
   vnet_main_t *vnm = vnet_get_main ();
   vnet_sw_interface_t *sw = vnet_get_sw_interface (vnm, xd->sw_if_index);
@@ -78,12 +131,12 @@ dpdk_device_setup (dpdk_device_t * xd)
     {
       vnet_hw_interface_set_flags (vnm, xd->hw_if_index, 0);
       dpdk_device_stop (xd);
-    }
+  }
 
   rte_eth_dev_info_get (xd->port_id, &dev_info);
 
   dpdk_log_debug ("[%u] configuring device %U", xd->port_id,
-		  format_dpdk_rte_device, dev_info.device);
+                 format_dpdk_rte_device, dev_info.device);
 
   /* create rx and tx offload wishlist */
   rxo = RTE_ETH_RX_OFFLOAD_IPV4_CKSUM;
@@ -99,16 +152,16 @@ dpdk_device_setup (dpdk_device_t * xd)
 
   if (xd->conf.disable_tx_checksum_offload == 0)
     txo |= RTE_ETH_TX_OFFLOAD_IPV4_CKSUM | RTE_ETH_TX_OFFLOAD_TCP_CKSUM |
-	   RTE_ETH_TX_OFFLOAD_UDP_CKSUM;
+           RTE_ETH_TX_OFFLOAD_UDP_CKSUM;
 
   if (xd->conf.disable_multi_seg == 0)
     {
-      txo |= RTE_ETH_TX_OFFLOAD_MULTI_SEGS;
-      rxo |= RTE_ETH_RX_OFFLOAD_SCATTER;
+    txo |= RTE_ETH_TX_OFFLOAD_MULTI_SEGS;
+    rxo |= RTE_ETH_RX_OFFLOAD_SCATTER;
 #if RTE_VERSION < RTE_VERSION_NUM(21, 11, 0, 0)
-      rxo |= DEV_RX_OFFLOAD_JUMBO_FRAME;
+    rxo |= DEV_RX_OFFLOAD_JUMBO_FRAME;
 #endif
-    }
+  }
 
   if (xd->conf.enable_lro)
     rxo |= RTE_ETH_RX_OFFLOAD_TCP_LRO;
@@ -116,7 +169,7 @@ dpdk_device_setup (dpdk_device_t * xd)
   /* per-device offload config */
   if (xd->conf.enable_tso)
     txo |= RTE_ETH_TX_OFFLOAD_TCP_CKSUM | RTE_ETH_TX_OFFLOAD_TCP_TSO |
-	   RTE_ETH_TX_OFFLOAD_VXLAN_TNL_TSO;
+           RTE_ETH_TX_OFFLOAD_VXLAN_TNL_TSO;
 
   if (xd->conf.disable_rx_scatter)
     rxo &= ~RTE_ETH_RX_OFFLOAD_SCATTER;
@@ -126,13 +179,13 @@ dpdk_device_setup (dpdk_device_t * xd)
   txo &= dev_info.tx_offload_capa;
 
   dpdk_log_debug ("[%u] Supported RX offloads: %U", xd->port_id,
-		  format_dpdk_rx_offload_caps, dev_info.rx_offload_capa);
+                 format_dpdk_rx_offload_caps, dev_info.rx_offload_capa);
   dpdk_log_debug ("[%u] Configured RX offloads: %U", xd->port_id,
-		  format_dpdk_rx_offload_caps, rxo);
+                 format_dpdk_rx_offload_caps, rxo);
   dpdk_log_debug ("[%u] Supported TX offloads: %U", xd->port_id,
-		  format_dpdk_tx_offload_caps, dev_info.tx_offload_capa);
+                 format_dpdk_tx_offload_caps, dev_info.tx_offload_capa);
   dpdk_log_debug ("[%u] Configured TX offloads: %U", xd->port_id,
-		  format_dpdk_tx_offload_caps, txo);
+                 format_dpdk_tx_offload_caps, txo);
 
   /* finalize configuration */
   conf.rxmode.offloads = rxo;
@@ -150,22 +203,22 @@ dpdk_device_setup (dpdk_device_t * xd)
     {
       if (xd->conf.disable_rss == 0)
 	{
-	  conf.rxmode.mq_mode = RTE_ETH_MQ_RX_RSS;
-	  conf.rx_adv_conf.rss_conf.rss_hf = xd->conf.rss_hf;
-	}
+      conf.rxmode.mq_mode = RTE_ETH_MQ_RX_RSS;
+      conf.rx_adv_conf.rss_conf.rss_hf = xd->conf.rss_hf;
     }
+  }
 
 #if RTE_VERSION < RTE_VERSION_NUM(21, 11, 0, 0)
   if (rxo & DEV_RX_OFFLOAD_JUMBO_FRAME)
     {
-      conf.rxmode.max_rx_pkt_len = dev_info.max_rx_pktlen;
-      xd->max_supported_frame_size = dev_info.max_rx_pktlen;
+    conf.rxmode.max_rx_pkt_len = dev_info.max_rx_pktlen;
+    xd->max_supported_frame_size = dev_info.max_rx_pktlen;
     }
   else
     {
-      xd->max_supported_frame_size =
+    xd->max_supported_frame_size =
 	clib_min (1500 + xd->driver_frame_overhead, buf_sz);
-    }
+  }
 #else
   if (xd->conf.disable_multi_seg)
     xd->max_supported_frame_size = clib_min (dev_info.max_rx_pktlen, buf_sz);
@@ -174,20 +227,27 @@ dpdk_device_setup (dpdk_device_t * xd)
 #endif
 
   max_frame_size = clib_min (xd->max_supported_frame_size,
-			     ethernet_main.default_mtu + hi->frame_overhead);
+                            ethernet_main.default_mtu + hi->frame_overhead);
 
 #if RTE_VERSION >= RTE_VERSION_NUM(21, 11, 0, 0)
   conf.rxmode.mtu = max_frame_size - xd->driver_frame_overhead;
 #endif
 
+  /*configuration timestamps, check in dpdk_lib_init*/
+  xd->tsc_dynfield_offset = dm->conf->tsc_dynfield_offset;
+  dpdk_log_debug("tsc_dynfield_offset: %d copyed at dpdk_device_setup, nic: %d", xd->tsc_dynfield_offset, xd->hw_if_index);
+  xd->cycle_per_ns = dm->conf->cycle_per_ns;
+  xd->cycle_per_us = dm->conf->cycle_per_us;
+  xd->cycle_per_ms = dm->conf->cycle_per_ms;
+
 retry:
   rv = rte_eth_dev_configure (xd->port_id, xd->conf.n_rx_queues,
-			      xd->conf.n_tx_queues, &conf);
+                             xd->conf.n_tx_queues, &conf);
   if (rv < 0 && conf.intr_conf.rxq)
     {
-      conf.intr_conf.rxq = 0;
-      goto retry;
-    }
+    conf.intr_conf.rxq = 0;
+    goto retry;
+  }
 
 #if RTE_VERSION < RTE_VERSION_NUM(21, 11, 0, 0)
   rte_eth_dev_set_mtu (xd->port_id,
@@ -197,29 +257,32 @@ retry:
   hi->max_frame_size = 0;
   vnet_hw_interface_set_max_frame_size (vnm, xd->hw_if_index, max_frame_size);
   dpdk_log_debug ("[%u] max_frame_size %u max max_frame_size %u "
-		  "driver_frame_overhead %u",
+                 "driver_frame_overhead %u",
 		  xd->port_id, hi->max_frame_size,
 		  xd->max_supported_frame_size, xd->driver_frame_overhead);
 
   vec_validate_aligned (xd->tx_queues, xd->conf.n_tx_queues - 1,
-			CLIB_CACHE_LINE_BYTES);
+                       CLIB_CACHE_LINE_BYTES);
   for (j = 0; j < xd->conf.n_tx_queues; j++)
     {
       rv = rte_eth_tx_queue_setup (xd->port_id, j, xd->conf.n_tx_desc,
-				   xd->cpu_socket, 0);
+                                xd->cpu_socket, 0);
 
-      /* retry with any other CPU socket */
-      if (rv < 0)
+    /* retry with any other CPU socket */
+    if (rv < 0)
 	rv = rte_eth_tx_queue_setup (xd->port_id, j, xd->conf.n_tx_desc,
-				     SOCKET_ID_ANY, 0);
-      if (rv < 0)
+                                  SOCKET_ID_ANY, 0);
+    if (rv < 0)
 	dpdk_device_error (xd, "rte_eth_tx_queue_setup", rv);
 
+      /* add latency calculate call back function */
+      rte_eth_add_tx_callback(xd->port_id, 0, add_timestamps, (void*)xd);
+      rte_eth_add_tx_callback(xd->port_id, 0, calc_latency, (void*)xd);
       clib_spinlock_init (&vec_elt (xd->tx_queues, j).lock);
-    }
+  }
 
   vec_validate_aligned (xd->rx_queues, xd->conf.n_rx_queues - 1,
-			CLIB_CACHE_LINE_BYTES);
+                       CLIB_CACHE_LINE_BYTES);
 
   for (j = 0; j < xd->conf.n_rx_queues; j++)
     {
@@ -227,27 +290,27 @@ retry:
       u8 bpidx = vlib_buffer_pool_get_default_for_numa (
 	vm, vnet_hw_if_get_rx_queue_numa_node (vnm, rxq->queue_index));
       vlib_buffer_pool_t *bp = vlib_get_buffer_pool (vm, bpidx);
-      struct rte_mempool *mp = dpdk_mempool_by_buffer_pool_index[bpidx];
+    struct rte_mempool *mp = dpdk_mempool_by_buffer_pool_index[bpidx];
 
       rv = rte_eth_rx_queue_setup (xd->port_id, j, xd->conf.n_rx_desc,
-				   xd->cpu_socket, 0, mp);
+                                xd->cpu_socket, 0, mp);
 
-      /* retry with any other CPU socket */
-      if (rv < 0)
+    /* retry with any other CPU socket */
+    if (rv < 0)
 	rv = rte_eth_rx_queue_setup (xd->port_id, j, xd->conf.n_rx_desc,
-				     SOCKET_ID_ANY, 0, mp);
+                                  SOCKET_ID_ANY, 0, mp);
 
-      rxq->buffer_pool_index = bp->index;
+    rxq->buffer_pool_index = bp->index;
 
-      if (rv < 0)
+    if (rv < 0)
 	dpdk_device_error (xd, "rte_eth_rx_queue_setup", rv);
-    }
+  }
 
   if (vec_len (xd->errors))
     goto error;
 
   xd->buffer_flags =
-    (VLIB_BUFFER_TOTAL_LENGTH_VALID | VLIB_BUFFER_EXT_HDR_VALID);
+      (VLIB_BUFFER_TOTAL_LENGTH_VALID | VLIB_BUFFER_EXT_HDR_VALID);
 
   if ((rxo & (RTE_ETH_RX_OFFLOAD_TCP_CKSUM | RTE_ETH_RX_OFFLOAD_UDP_CKSUM)) ==
       (RTE_ETH_RX_OFFLOAD_TCP_CKSUM | RTE_ETH_RX_OFFLOAD_UDP_CKSUM))
@@ -255,13 +318,13 @@ retry:
       (VNET_BUFFER_F_L4_CHECKSUM_COMPUTED | VNET_BUFFER_F_L4_CHECKSUM_CORRECT);
 
   dpdk_device_flag_set (xd, DPDK_DEVICE_FLAG_RX_IP4_CKSUM,
-			rxo & RTE_ETH_RX_OFFLOAD_IPV4_CKSUM);
+                       rxo & RTE_ETH_RX_OFFLOAD_IPV4_CKSUM);
   dpdk_device_flag_set (xd, DPDK_DEVICE_FLAG_MAYBE_MULTISEG,
-			rxo & RTE_ETH_RX_OFFLOAD_SCATTER);
+                       rxo & RTE_ETH_RX_OFFLOAD_SCATTER);
   dpdk_device_flag_set (
-    xd, DPDK_DEVICE_FLAG_TX_OFFLOAD,
-    (txo & (RTE_ETH_TX_OFFLOAD_TCP_CKSUM | RTE_ETH_TX_OFFLOAD_UDP_CKSUM)) ==
-      (RTE_ETH_TX_OFFLOAD_TCP_CKSUM | RTE_ETH_TX_OFFLOAD_UDP_CKSUM));
+      xd, DPDK_DEVICE_FLAG_TX_OFFLOAD,
+      (txo & (RTE_ETH_TX_OFFLOAD_TCP_CKSUM | RTE_ETH_TX_OFFLOAD_UDP_CKSUM)) ==
+          (RTE_ETH_TX_OFFLOAD_TCP_CKSUM | RTE_ETH_TX_OFFLOAD_UDP_CKSUM));
 
   /* unconditionally set mac filtering cap */
   caps.val = caps.mask = VNET_HW_IF_CAP_MAC_FILTER;
@@ -272,10 +335,10 @@ retry:
   for (int i = 0; i < ARRAY_LEN (tx_off_caps_map); i++)
     {
       __typeof__ (tx_off_caps_map[0]) *v = tx_off_caps_map + i;
-      caps.mask |= v->caps;
-      if ((v->offload & txo) == v->offload)
-	caps.val |= v->caps;
-    }
+    caps.mask |= v->caps;
+    if ((v->offload & txo) == v->offload)
+      caps.val |= v->caps;
+  }
 
   vnet_hw_if_change_caps (vnm, xd->hw_if_index, &caps);
   xd->enabled_rx_off = rxo;
@@ -309,7 +372,7 @@ dpdk_rx_read_ready (clib_file_t *uf)
     {
       vnet_hw_if_rx_queue_set_int_pending (vnm, uf->private_data);
       rte_eth_dev_rx_intr_enable (xd->port_id, rxq->queue_id);
-    }
+  }
 
   return 0;
 }
@@ -330,20 +393,20 @@ dpdk_setup_interrupts (dpdk_device_t *xd)
   if (rte_eth_dev_rx_intr_enable (xd->port_id, 0))
     {
       dpdk_log_info ("probe for interrupt mode for device %U. Failed.\n",
-		     format_dpdk_device_name, xd->device_index);
+                  format_dpdk_device_name, xd->device_index);
     }
   else
     {
-      xd->flags |= DPDK_DEVICE_FLAG_INT_SUPPORTED;
-      if (!(xd->flags & DPDK_DEVICE_FLAG_INT_UNMASKABLE))
+    xd->flags |= DPDK_DEVICE_FLAG_INT_SUPPORTED;
+    if (!(xd->flags & DPDK_DEVICE_FLAG_INT_UNMASKABLE))
 	rte_eth_dev_rx_intr_disable (xd->port_id, 0);
       dpdk_log_info ("Probe for interrupt mode for device %U. Success.\n",
-		     format_dpdk_device_name, xd->device_index);
-    }
+                  format_dpdk_device_name, xd->device_index);
+  }
 
   if (xd->flags & DPDK_DEVICE_FLAG_INT_SUPPORTED)
     {
-      int_mode = 1;
+    int_mode = 1;
       for (int q = 0; q < xd->conf.n_rx_queues; q++)
 	{
 	  dpdk_rx_queue_t *rxq = vec_elt_at_index (xd->rx_queues, q);
@@ -351,28 +414,28 @@ dpdk_setup_interrupts (dpdk_device_t *xd)
 	  rxq->efd = rte_eth_dev_rx_intr_ctl_q_get_fd (xd->port_id, q);
 	  if (rxq->efd < 0)
 	    {
-	      xd->flags &= ~DPDK_DEVICE_FLAG_INT_SUPPORTED;
-	      int_mode = 0;
-	      break;
-	    }
-	  f.read_function = dpdk_rx_read_ready;
-	  f.flags = UNIX_FILE_EVENT_EDGE_TRIGGERED;
-	  f.file_descriptor = rxq->efd;
-	  f.private_data = rxq->queue_index;
+        xd->flags &= ~DPDK_DEVICE_FLAG_INT_SUPPORTED;
+        int_mode = 0;
+        break;
+      }
+      f.read_function = dpdk_rx_read_ready;
+      f.flags = UNIX_FILE_EVENT_EDGE_TRIGGERED;
+      f.file_descriptor = rxq->efd;
+      f.private_data = rxq->queue_index;
 	  f.description = format (0, "%U queue %u", format_dpdk_device_name,
-				  xd->device_index, q);
+                             xd->device_index, q);
 	  rxq->clib_file_index = clib_file_add (&file_main, &f);
 	  vnet_hw_if_set_rx_queue_file_index (vnm, rxq->queue_index,
-					      rxq->clib_file_index);
+                                         rxq->clib_file_index);
 	  if (xd->flags & DPDK_DEVICE_FLAG_INT_UNMASKABLE)
 	    {
-	      clib_file_main_t *fm = &file_main;
+        clib_file_main_t *fm = &file_main;
 	      clib_file_t *f =
 		pool_elt_at_index (fm->file_pool, rxq->clib_file_index);
 	      fm->file_update (f, UNIX_FILE_UPDATE_DELETE);
-	    }
-	}
+      }
     }
+  }
 
   if (int_mode)
     vnet_hw_if_set_caps (vnm, hi->hw_if_index, VNET_HW_IF_CAP_INT_MODE);
@@ -394,13 +457,13 @@ dpdk_device_start (dpdk_device_t * xd)
   if (rv)
     {
       dpdk_device_error (xd, "rte_eth_dev_start", rv);
-      return;
-    }
+    return;
+  }
 
   dpdk_log_debug ("[%u] RX burst function: %U", xd->port_id,
-		  format_dpdk_burst_fn, xd, VLIB_RX);
+                 format_dpdk_burst_fn, xd, VLIB_RX);
   dpdk_log_debug ("[%u] TX burst function: %U", xd->port_id,
-		  format_dpdk_burst_fn, xd, VLIB_TX);
+                 format_dpdk_burst_fn, xd, VLIB_TX);
 
   dpdk_setup_interrupts (xd);
 
@@ -419,7 +482,7 @@ dpdk_device_start (dpdk_device_t * xd)
   rte_eth_allmulticast_enable (xd->port_id);
 
   dpdk_log_info ("Interface %U started", format_dpdk_device_name,
-		 xd->device_index);
+                xd->device_index);
 }
 
 void
@@ -433,7 +496,7 @@ dpdk_device_stop (dpdk_device_t * xd)
   clib_memset (&xd->link, 0, sizeof (struct rte_eth_link));
 
   dpdk_log_info ("Interface %U stopped", format_dpdk_device_name,
-		 xd->device_index);
+                xd->device_index);
 }
 
 void vl_api_force_rpc_call_main_thread (void *fp, u8 * data, u32 data_length);
@@ -448,8 +511,8 @@ dpdk_port_state_callback_inline (dpdk_portid_t port_id,
   if (type != RTE_ETH_EVENT_INTR_LSC)
     {
       dpdk_log_info ("Unknown event %d received for port %d", type, port_id);
-      return -1;
-    }
+    return -1;
+  }
 
   rte_eth_link_get_nowait (port_id, &link);
   u8 link_up = link.link_status;

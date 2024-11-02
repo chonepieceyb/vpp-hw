@@ -10,6 +10,10 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 vppctl_binary = os.path.join(PROJECT_ROOT , "build-root/build-vpp-native/vpp/bin/vppctl")
 vpp_binary = os.path.join(PROJECT_ROOT, "build-root/build-vpp-native/vpp/bin/vpp")
 
+# debug版vpp的路径
+vppctl_binary_debug = os.path.join(PROJECT_ROOT , "build-root/build-vpp_debug-native/vpp/bin/vppctl")
+vpp_binary_debug = os.path.join(PROJECT_ROOT, "build-root/build-vpp_debug-native/vpp/bin/vpp")
+
 # 原版vpp的路径
 vppctl_binary_origin = "/mnt/disk1/zhaolunqi/vpp/build-root/install-vpp-native/vpp/bin/vppctl"
 vpp_binary_origin = "/mnt/disk1/zhaolunqi/vpp/build-root/install-vpp-native/vpp/bin/vpp"
@@ -38,6 +42,7 @@ def help_func():
     print("                         in list and place worker threads on other listed cores.")
     print("                         Cores are separated by commas, and worker cores can include ranges.")
     print("    -b                   use original vpp binary and vppctl binary as baseline")
+    print("    -d                   use debug version vpp binary and vppctl binary")
     print("    -t                   create a tun device to redirect host packet from vpp to host")
     print()
     print("Example:")
@@ -90,12 +95,17 @@ def nat_setup():
     # nat44 add static mapping local 192.82.0.1 external 10.12.0.10
     # nat44 forwarding enable
     subprocess.run(["sudo", vppctl_binary, "-s", SOCKFILE, "nat44", "plugin", "enable"])
-    subprocess.run(["sudo", vppctl_binary, "-s", SOCKFILE, "set", "int", "nat44", "out", Ethernet1])
+    # subprocess.run(["sudo", vppctl_binary, "-s", SOCKFILE, "set", "int", "nat44", "out", Ethernet1])
+    subprocess.run(["sudo", vppctl_binary, "-s", SOCKFILE, "set", "int", "nat44", "in", Ethernet0])
     for i in range(1, nat_range1):
         for j in range(1, nat_range2):
-            subprocess.run(["sudo", vppctl_binary, "-s", SOCKFILE, "nat44", "add", "address", f"10.12.{i}.{j}"])
-            subprocess.run(["sudo", vppctl_binary, "-s", SOCKFILE, "nat44", "add", "static", "mapping", "local", f"192.82.{i}.{j}", "external", f"10.12.{i}.{j}"])
+            subprocess.run(["sudo", vppctl_binary, "-s", SOCKFILE, "nat44", "add", "address", f"220.220.{i}.{j}"])
+            subprocess.run(["sudo", vppctl_binary, "-s", SOCKFILE, "nat44", "add", "static", "mapping", "local", f"192.82.{i}.{j}", "external", f"220.220.{i}.{j}"])
         print(f"nat44 address {i*nat_range2}/{(nat_range1-1)*nat_range2} configuration successful!")
+#     设置一半的ipv4流经过NAT转换
+    for i in range(1, 128):
+        subprocess.run(["sudo", vppctl_binary, "-s", SOCKFILE, "nat44", "add", "address", f"10.168.3.{i}"])
+        subprocess.run(["sudo", vppctl_binary, "-s", SOCKFILE, "nat44", "add", "static", "mapping", "local", f"192.168.3.{i}", "external", f"10.168.3.{i}"])
     subprocess.run(["sudo", vppctl_binary, "-s", SOCKFILE, "nat44", "forwarding", "enable"])
     print("DNAT configuration successful!")
 
@@ -135,7 +145,7 @@ def setup_iface():
     subprocess.run(["sudo", vppctl_binary, "-s", SOCKFILE, "set", "ip", "neighbor", Ethernet1, "192.168.2.2", "04:3f:72:f4:40:4a"])
     subprocess.run(["sudo", vppctl_binary, "-s", SOCKFILE, "set", "ip", "neighbor", Ethernet1, "::2:2", "04:3f:72:f4:40:4a"])
     # 将IPv4 L3 fwd流量转回node3 Trex
-    subprocess.run(["sudo", vppctl_binary, "-s", SOCKFILE, "ip", "route", "add", "192.168.3.1/32", "via", "192.168.2.2", Ethernet1])
+    subprocess.run(["sudo", vppctl_binary, "-s", SOCKFILE, "ip", "route", "add", "192.168.3.0/24", "via", "192.168.2.2", Ethernet1])
     # 将IPv6 L3 fwd流量转回node3 Trex
     subprocess.run(["sudo", vppctl_binary, "-s", SOCKFILE, "ip", "route", "add", "::3:1/128", "via", "::2:2", Ethernet1])
     print("IPv4&6 L3 fwd configuration successful!")
@@ -151,6 +161,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", "--core", help="set CPU affinity. Assign VPP main thread to 1st core in list and place worker threads on other listed cores. Cores are separated by commas, and worker cores can include ranges.", required=True)
     parser.add_argument("-b", "--baseline", help="use origin vpp as baseline", required=False, action="store_true")
+    parser.add_argument("-d", "--debug", help="use debug version vpp", required=False, action="store_true")
     parser.add_argument("-t", "--tun", help="enable tun device to redirect host packet", required=False, action="store_true")
     parser.add_argument("-a", "--acl", help="enable acl rules setting", required=False, action="store_true")
     parser.add_argument("-n", "--nat", help="enable nat rules setting", required=False, action="store_true")
@@ -158,6 +169,7 @@ if __name__ == "__main__":
 
     core_list = args.core
     use_baseline = args.baseline
+    use_debug = args.debug
     use_tun = args.tun
     use_acl = args.acl
     use_nat = args.nat
@@ -166,6 +178,10 @@ if __name__ == "__main__":
         vpp_binary = vpp_binary_origin
         vppctl_binary = vppctl_binary_origin
         print("- Using original vpp, location at :", vpp_binary)
+    elif use_debug:
+        vpp_binary = vpp_binary_debug
+        vppctl_binary = vppctl_binary_debug
+        print("- Using debug vpp, location at :", vpp_binary)
 
     main_core = None
     worker_core_list = None
