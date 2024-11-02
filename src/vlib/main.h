@@ -258,6 +258,9 @@ typedef struct vlib_main_t
   u32 buffer_alloc_success_seed;
   f64 buffer_alloc_success_rate;
 
+  /* Indices of nodes that require refresh of batching config */
+  u32 *volatile batch_config_refresh_required_node_indices;
+
 #ifdef CLIB_SANITIZE_ADDR
   /* address sanitizer stack save */
   void *asan_stack_save;

@@ -350,6 +350,23 @@ vlib_node_runtime_get_next_frame (vlib_main_t * vm,
   return nf;
 }
 
+always_inline vlib_node_runtime_t *
+vlib_next_frame_get_node_runtime (vlib_main_t *vm, vlib_next_frame_t *nf)
+{
+  vlib_node_main_t *nm = &vm->node_main;
+  vlib_node_runtime_t *rt;
+
+  ASSERT (nf->node_runtime_index <
+	  vec_len (nm->nodes_by_type[VLIB_NODE_TYPE_INTERNAL]));
+
+  /* It is assumed that `nf` must be linked to a node of type INTERNAL */
+  rt = vec_elt_at_index (vm->node_main.nodes_by_type[VLIB_NODE_TYPE_INTERNAL],
+			 nf->node_runtime_index);
+
+  ASSERT (rt);
+  return rt;
+}
+
 /** \brief Get pointer to frame by (@c node_index, @c next_index).
 
  @warning This is not a function that you should call directly.
@@ -387,10 +404,13 @@ vlib_frame_t *vlib_get_next_frame_internal (vlib_main_t * vm,
     {                                                                         \
       vlib_frame_t *_f = vlib_get_next_frame_internal (                       \
 	(vm), (node), (next_index), (alloc_new_frame));                       \
-      vlib_next_frame_t *_nf = vlib_node_runtime_get_next_frame((vm), (node), (next_index)); \
+      vlib_next_frame_t *_nf =                                                \
+	vlib_node_runtime_get_next_frame ((vm), (node), (next_index));        \
+      vlib_node_runtime_t *_rt =                                              \
+	vlib_next_frame_get_node_runtime ((vm), _nf);                         \
       u32 _n = _f->n_vectors;                                                 \
       (vectors) = vlib_frame_vector_args (_f) + _n * sizeof ((vectors)[0]);   \
-      (n_vectors_left) = _nf->batch_size - _n;                                \
+      (n_vectors_left) = _rt->batch_size - _n;                                \
     }                                                                         \
   while (0)
 
@@ -402,13 +422,16 @@ vlib_frame_t *vlib_get_next_frame_internal (vlib_main_t * vm,
       vlib_frame_t *_f = vlib_get_next_frame_internal (                       \
 	(vm), (node), (next_index), (alloc_new_frame));                       \
       u32 _n = _f->n_vectors;                                                 \
-      vlib_next_frame_t *_nf = vlib_node_runtime_get_next_frame((vm), (node), (next_index)); \
+      vlib_next_frame_t *_nf =                                                \
+	vlib_node_runtime_get_next_frame ((vm), (node), (next_index));        \
+      vlib_node_runtime_t *_rt =                                              \
+	vlib_next_frame_get_node_runtime ((vm), _nf);                         \
       (vectors) = vlib_frame_vector_args (_f) + _n * sizeof ((vectors)[0]);   \
       if ((maybe_no_aux) && (_f)->aux_offset == 0)                            \
 	(aux_data) = NULL;                                                    \
       else                                                                    \
 	(aux_data) = vlib_frame_aux_args (_f) + _n * sizeof ((aux_data)[0]);  \
-      (n_vectors_left) = _nf->batch_size - _n;                                \
+      (n_vectors_left) = _rt->batch_size - _n;                                \
     }                                                                         \
   while (0)
 

@@ -449,12 +449,6 @@ typedef struct
   /* Number of vectors enqueue to this next since last overflow. */
   u32 vectors_since_last_overflow;
 
-  /* batch size*/
-  u32 batch_size; 
-
-  /* timeout interval in ticks*/
-  u64 timeout_interval;
-
   /* timer handler*/
   u32 stop_timer_handler;
 } vlib_next_frame_t;
@@ -544,6 +538,10 @@ typedef struct vlib_node_runtime_t
 					  last time this node ran. Set to
 					  zero before first run of this
 					  node. */
+
+  u32 batch_size;                       /**< Batch size. */
+
+  u64 timeout_interval;                 /**< Batching timeout in ticks. */
 
   CLIB_ALIGN_MARK (runtime_data_pad, 8);
 

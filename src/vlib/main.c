@@ -347,9 +347,11 @@ vlib_get_next_frame_internal (vlib_main_t * vm,
 {
   vlib_frame_t *f;
   vlib_next_frame_t *nf;
+  vlib_node_runtime_t *rt;
   u32 n_used;
 
   nf = vlib_node_runtime_get_next_frame (vm, node, next_index);
+  rt = vlib_next_frame_get_node_runtime (vm, nf);
 
   /* Make sure this next frame owns right to enqueue to destination frame. */
   if (PREDICT_FALSE (!(nf->flags & VLIB_FRAME_OWNER)))
@@ -377,7 +379,7 @@ vlib_get_next_frame_internal (vlib_main_t * vm,
   /* Allocate new frame if current one is marked as no-append or
      it is already full. */
   n_used = f->n_vectors;
-  if (n_used >= nf->batch_size || (allocate_new_next_frame && n_used > 0) ||
+  if (n_used >= rt->batch_size || (allocate_new_next_frame && n_used > 0) ||
       (f->frame_flags & VLIB_FRAME_NO_APPEND))
     {
       /* Old frame may need to be freed after dispatch, since we'll have
@@ -405,7 +407,7 @@ vlib_get_next_frame_internal (vlib_main_t * vm,
     }
 
   /* Should have free vectors in frame now. */
-  ASSERT (n_used < nf->batch_size);
+  ASSERT (n_used < rt->batch_size);
 
   if (CLIB_DEBUG > 0)
     {
@@ -463,6 +465,7 @@ vlib_put_next_frame (vlib_main_t * vm,
   vlib_node_main_t *nm = &vm->node_main;
   vlib_next_frame_t *nf;
   vlib_frame_t *f;
+  vlib_node_runtime_t *rt;
   u32 n_vectors_in_frame;
 
   if (CLIB_DEBUG > 0)
@@ -470,7 +473,8 @@ vlib_put_next_frame (vlib_main_t * vm,
 
   nf = vlib_node_runtime_get_next_frame (vm, r, next_index);
   f = vlib_get_frame (vm, nf->frame);
-  
+  rt = vlib_next_frame_get_node_runtime (vm, nf);
+
   /* Make sure that magic number is still there.  Otherwise, caller
      has overrun frame meta data. */
   if (CLIB_DEBUG > 0)
@@ -482,8 +486,8 @@ vlib_put_next_frame (vlib_main_t * vm,
   /* Convert # of vectors left -> number of vectors there. */
   //ASSERT (n_vectors_left <= VLIB_FRAME_SIZE);
   //n_vectors_in_frame = VLIB_FRAME_SIZE - n_vectors_left;
-  ASSERT (n_vectors_left <= nf->batch_size);
-  n_vectors_in_frame = nf->batch_size - n_vectors_left;
+  ASSERT (n_vectors_left <= rt->batch_size);
+  n_vectors_in_frame = rt->batch_size - n_vectors_left;
 
   f->n_vectors = n_vectors_in_frame;
 
@@ -512,8 +516,8 @@ vlib_put_next_frame (vlib_main_t * vm,
 	  nf->flags |= VLIB_FRAME_PENDING;
 	  f->frame_flags |= VLIB_FRAME_PENDING;
 
-	  //add p to wait queue or run queue 
-	  if (f->n_vectors >= nf->batch_size || nf->timeout_interval == 0 || vm->barrier_flush) {
+	  // add p to wait queue or run queue
+	  if (f->n_vectors >= rt->batch_size || rt->timeout_interval == 0 || vm->barrier_flush) {
 		//clib_warning("+++++++++++++vpp add to run queue+++++++++++, pf index %lu, nf index %lu", p - nm->pending_frames,  p->next_frame_index );
 		vec_add1(nm->pf_runq, p - nm->pending_frames);
 		nf->stop_timer_handler = ~0;
@@ -525,7 +529,7 @@ vlib_put_next_frame (vlib_main_t * vm,
 		//clib_warning("+++++++++++++vpp add to wait queue +++++++++++, pf index %lu, nf index %lu, time %.6f", p - nm->pending_frames,  p->next_frame_index, now);
 		nf->stop_timer_handler = 
 			tw_timer_start_pf_waitq(nm->pf_waitq, 
-				p - nm->pending_frames, 0, nf->timeout_interval);
+				p - nm->pending_frames, 0, rt->timeout_interval);
 	  } 
 	}
 
