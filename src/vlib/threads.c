@@ -1327,6 +1327,9 @@ vlib_worker_thread_barrier_sync_int (vlib_main_t * vm, const char *func_name)
   u32 count;
   int i;
 
+  /* Work to be done before barrier sync process */
+  vec_reset_length (vm->batch_config_refresh_required_node_indices);
+
   if (vlib_get_n_threads () < 2)
     return;
 

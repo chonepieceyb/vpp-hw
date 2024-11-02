@@ -444,7 +444,6 @@ vlib_worker_thread_barrier_check (void)
 	  ed->duration = (int) (1000000.0 * t);
 	}
 
-      /* FIXME: When to clear this vector? */
       if (PREDICT_FALSE (
 	    vec_len (first_vm->batch_config_refresh_required_node_indices) !=
 	    0))

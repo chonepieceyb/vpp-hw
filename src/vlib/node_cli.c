@@ -933,7 +933,6 @@ set_node_batch (vlib_main_t *vm, unformat_input_t *input,
 {
   unformat_input_t _line_input, *line_input = &_line_input;
   clib_error_t *error = 0;
-  vlib_main_t *first_vm;
   vlib_node_t *node;
   vlib_node_runtime_t *node_runtime;
   u32 node_index, *node_index_p, size, timeout;
@@ -1003,8 +1002,8 @@ set_node_batch (vlib_main_t *vm, unformat_input_t *input,
       op->node_runtime = node_runtime;
     }
 
-  first_vm = vlib_get_first_main ();
-  vec_reset_length (first_vm->batch_config_refresh_required_node_indices);
+  /* There is no need to clear batch_config_refresh_required_node_indices here,
+   * as it is already done in vlib_worker_thread_barrier_sync() */
 
   vec_foreach (op, ops)
     {
@@ -1019,17 +1018,16 @@ set_node_batch (vlib_main_t *vm, unformat_input_t *input,
 	  op->node_runtime->timeout_interval = op->timeout;
 	}
 
-      vec_add1 (first_vm->batch_config_refresh_required_node_indices,
+      vec_add1 (vm->batch_config_refresh_required_node_indices,
 		op->node_index);
     }
 
   if (CLIB_DEBUG > 0)
     {
-      clib_warning (
-	"%u nodes in total require batching config refresh",
-	vec_len (first_vm->batch_config_refresh_required_node_indices));
+      clib_warning ("%u nodes in total require batching config refresh",
+		    vec_len (vm->batch_config_refresh_required_node_indices));
       vec_foreach (node_index_p,
-		   first_vm->batch_config_refresh_required_node_indices)
+		   vm->batch_config_refresh_required_node_indices)
 	{
 	  node_index = *node_index_p;
 	  node = vlib_get_node (vm, node_index);
