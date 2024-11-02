@@ -35,12 +35,11 @@ ip4-mfib-forward-lookup        21.45        26.62        6.16        0.00
 """
 
 
-def extract_vpp_wk_0_stats(input_string):
+def extract_vpp_wk_0_perf_stats(input_string):
     # Use regular expressions to find the section between vpp_wk_0 (1) and vpp_wk_1 (2)
     # Define a pattern to match the section starting with vpp_wk_0 (1) and capture the following lines
     pattern = re.compile(r"vpp_wk_0 \(1\)\s*\n((?:.*\n)*)", re.DOTALL)
     match = pattern.search(input_string)
-
     stats = {}
     if match:
         # Extract the relevant section
@@ -52,28 +51,48 @@ def extract_vpp_wk_0_stats(input_string):
         # Process each line to extract statistics
         for line in lines:
             parts = line.split()
-            if len(parts) == 7:
+            if len(parts) == 5:
                 key = parts[0]
                 stats[key] = {
-                    "L1I_miss/pkt": float(parts[1]),
-                    "L1D_miss/pkt": float(parts[2]),
-                    "L1_miss/pkt": float(parts[3]),
-                    "L2_miss/pkt": float(parts[4]),
-                    "L3_miss/pkt": float(parts[5]),
+                    "L1I_miss_per_pkt": float(parts[1]),
+                    "L1D_miss_per_pkt": float(parts[2]),
+                    "L2_miss_per_pkt": float(parts[3]),
+                    "L3_miss_per_pkt": float(parts[4]),
                 }
     return stats
 
+def extract_Ethernet1_lat_stats(input_string):
+    pattern = re.compile(r"Ethernet1 \[latency\] total_lat\(ns\): (\d+), pkts: (\d+), timeout_pkts: (\d+), avg_lat\(ns\): (\d+)")
+    match = pattern.search(input_string)
+    lat_stats = {}
+    if match:
+        lat_stats = {
+            "total_lat_ns": int(match.group(1)),
+            "total_pkts": int(match.group(2)),
+            "timeout_pkts": int(match.group(3)),
+            "avg_lat_ns": int(match.group(4)),
+        }
+    return lat_stats
+
 def get_perf_stats():
     perf_result = ""
+    lat_result = ""
     try:
         subprocess.run([ "sudo", "vppctl", "-s", "/run/vpp/remote/cli_remote.sock", "perfmon", "stop"], capture_output=False)
         perf_result = subprocess.check_output([ "sudo", "vppctl", "-s", "/run/vpp/remote/cli_remote.sock", "show", "perfmon", "statistics"]).decode()
         subprocess.run([ "sudo", "vppctl", "-s", "/run/vpp/remote/cli_remote.sock", "perfmon", "reset"], capture_output=False)
-        subprocess.run([ "sudo", "vppctl", "-s", "/run/vpp/remote/cli_remote.sock", "perfmon", "start", "bundle", "cache-hierarchy"], capture_output=False)
+        subprocess.run([ "sudo", "vppctl", "-s", "/run/vpp/remote/cli_remote.sock", "perfmon", "start", "bundle", "cache-detail"], capture_output=False)
+        lat_result = subprocess.check_output([ "sudo", "vppctl", "-s", "/run/vpp/remote/cli_remote.sock", "dpdk", "latency", "show"]).decode()
+
     except subprocess.CalledProcessError as e:
         print(f"An error occurred while running the command: {e}")
     perf_result = remove_CtrlChars(perf_result)
-    stats = extract_vpp_wk_0_stats(perf_result)
+    lat_result = remove_CtrlChars(lat_result)
+    perf_stats = extract_vpp_wk_0_perf_stats(perf_result)
+    lat_stat = extract_Ethernet1_lat_stats(lat_result)
+#     print(f"perf_stats: {perf_stats}")
+#     print(f"lat_stat: {lat_stat}")
+    stats = {**perf_stats, **lat_stat}
     return stats
 
 
