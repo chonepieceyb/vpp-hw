@@ -104,7 +104,7 @@ def nat_setup():
             subprocess.run(["sudo", vppctl_binary, "-s", SOCKFILE, "nat44", "add", "static", "mapping", "local", f"192.82.{i}.{j}", "external", f"220.220.{i}.{j}"])
         print(f"nat44 address {i*nat_range2}/{(nat_range1-1)*nat_range2} configuration successful!")
 #     设置一半的ipv4流经过NAT转换
-    for i in range(1, 128):
+    for i in range(1, 256):
         subprocess.run(["sudo", vppctl_binary, "-s", SOCKFILE, "nat44", "add", "address", f"10.168.3.{i}"])
         subprocess.run(["sudo", vppctl_binary, "-s", SOCKFILE, "nat44", "add", "static", "mapping", "local", f"192.168.3.{i}", "external", f"10.168.3.{i}"])
     subprocess.run(["sudo", vppctl_binary, "-s", SOCKFILE, "nat44", "forwarding", "enable"])
