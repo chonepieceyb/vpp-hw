@@ -83,6 +83,10 @@ static uint16_t calc_latency(uint16_t port, uint16_t qidx __rte_unused,
                              struct rte_mbuf **pkts, uint16_t nb_pkts,
                              void *xd) {
   dpdk_device_t *__xd = (dpdk_device_t *)xd;
+  // dpdk_device_t which has hw_if_index = 0 has not been initialized.
+  if(unlikely(__xd->hw_if_index == 0)) {
+    return nb_pkts;
+  }
   uint64_t total_latency = 0;
   uint64_t now = rte_rdtsc();
   unsigned i;

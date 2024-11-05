@@ -43,6 +43,24 @@ class VppExpData(Base):
     create_time = Column(DateTime)
     deleted = Column(Boolean)
 
+class PerfData(Base):
+    __tablename__ = 'vpp_perf_data'
+    id = Column(Integer, primary_key=True)
+    batch_size_setting = Column(Integer)
+    # L1-dcache-loads,L1-dcache-load-misses,L1-dcache-store,icache.hit,icache.misses,icache.ifdata_stall,LLC-loads,LLC-load-misses,LLC-stores,L2_RQSTS.ALL_DEMAND_MISS
+    L1_dcache_loads = Column(Integer)
+    L1_dcache_load_misses = Column(Integer)
+    L1_dcache_store = Column(Integer)
+    icache_hit = Column(Integer)
+    icache_misses = Column(Integer)
+    icache_ifdata_stall = Column(Integer)
+    LLC_loads = Column(Integer)
+    LLC_load_misses = Column(Integer)
+    LLC_stores = Column(Integer)
+    L2_RQSTS_ALL_DEMAND_MISS = Column(Integer)
+    create_time = Column(DateTime)
+    deleted = Column(Boolean)
+
 # 初始化数据库连接:
 engine = create_engine('sqlite:///vpp_exp.db')
 # 创建数据库表
@@ -51,10 +69,8 @@ Base.metadata.create_all(engine)
 session_maker = sessionmaker(bind=engine)
 DBSession = session_maker()
 
-batch_size_setting = 64
-time_out_setting = 20000
 duration = 3
-exp_repeat_count = 5
+exp_repeat_count = 10
 
 def extract_vpp_wk_0_perf_stats(input_string):
     # Use regular expressions to find the section between vpp_wk_0 (1) and vpp_wk_1 (2)
@@ -136,7 +152,7 @@ def extract_vpp_wk_0_runtime_stats(input_string):
         value["throughput_actual"] = throughput
     return stats
 
-def get_stats():
+def get_stats(key_tuple):
     perf_result = ""
     lat_result = ""
     runtime_result = ""
@@ -158,19 +174,20 @@ def get_stats():
     # print(f"lat_stat: {lat_stat}")
     # print(f"runtime_stat: {runtime_stat}")
     stats = {**perf_stat, **lat_stat, **runtime_stat}
-    store_vpp_exp_data(perf_stat, lat_stat, runtime_stat)
+    store_vpp_exp_data(perf_stat, lat_stat, runtime_stat, key_tuple)
     return stats
 
 # store data into database
-def store_vpp_exp_data(perf_stat: dict, lat_stat: dict, runtime_stat: dict):
+def store_vpp_exp_data(perf_stat: dict, lat_stat: dict, runtime_stat: dict, key_tuple: tuple):
+    key_dict = {node: {"batch_size": batch_size, "timeout": timeout} for node, batch_size, timeout in key_tuple}
     now = datetime.now()
     print("--Insert data into database--")
     for node_name, runtime in runtime_stat.items():
         data = VppExpData()
         try:
             data.name = node_name
-            data.batch_size_setting = batch_size_setting
-            data.time_out_setting = time_out_setting
+            data.batch_size_setting = key_dict.get(node_name, {}).get('batch_size', None)
+            data.time_out_setting = key_dict.get(node_name, {}).get('batch_size', None)
             data.batch_size_actual = runtime['Vectors_per_Call']
             data.time_out_actual = runtime['Avg_DPC_per_Call']
             data.L1I_cache_miss = perf_stat.get(node_name, {}).get('L1I_miss_per_pkt', None)
@@ -229,24 +246,82 @@ def _act(kt):
 
 def _gen_combinations(partial=None):
     nodes = ["ip4-input-no-checksum", "ip6-input", "nat-pre-in2out", "ip4-inacl"]
-    batch_sizes = [32, 64, 96, 128, 160, 192, 224, 256]
+    batch_sizes = range(16, 256+16, 16)
     timeouts = [90000000]
     for batch_size in batch_sizes:
         for timeout in timeouts:
             yield [[node, batch_size, timeout] for node in nodes]
 
+# def _gen_combinations(partial=None):
+#     nodes = ["ip4-input-no-checksum", "ip6-input", "nat-pre-in2out", "ip4-inacl"]
+#     batch_sizes = [16, 32, 48, 64, 96, 128, 160, 192, 224, 256]
+#     timeouts = [90000000]
+
+#     for batch_size in batch_sizes:
+#         for timeout in timeouts:
+#             if partial is None:
+#                 new_partial = []
+#             else:
+#                 new_partial = list(partial)
+#             new_partial.append([nodes[len(new_partial)], batch_size, timeout])
+#             if len(new_partial) == len(nodes):
+#                 yield new_partial
+#             else:
+#                 for combination in _gen_combinations(new_partial):
+#                     yield combination
 
 def record_exp_data():
     for key_tuple in _gen_combinations():
-        global batch_size_setting, time_out_setting
-        batch_size_setting = key_tuple[0][1]
-        time_out_setting = key_tuple[0][2]
         print(f"Running with key_tuple: {key_tuple}", file=sys.stderr)
         for i in range(exp_repeat_count):
             _act(key_tuple)
             reset_stats()
             time.sleep(duration)
-            get_stats()
+            get_stats(key_tuple)
+
+# used to reocrd perf-tool performance data
+def record_perf_data():
+    perf_pattern = re.compile(r"Performance counter stats for process id '(\d+)':\s*\n*((?:.*\n)*).*seconds time elapsed")
+    now = datetime.now()
+    for key_tuple in _gen_combinations():
+        print(f"Running with key_tuple: {key_tuple}", file=sys.stderr)
+        for i in range(exp_repeat_count):
+            _act(key_tuple)
+            # sudo perf stat -e L1-dcache-loads,L1-dcache-load-misses,L1-dcache-store,icache.hit,icache.misses,icache.ifdata_stall,LLC-loads,LLC-load-misses,LLC-stores,L2_RQSTS.ALL_DEMAND_MISS -p $(ps -eLo pid,comm | grep vpp_wk_0 | awk '{print $1}') sleep 3
+            ps_reault = subprocess.check_output(['ps', '-eLo', 'pid,comm']).decode().split('\n')
+            for line in ps_reault:
+                if 'vpp_wk_0' in line:
+                    vpp_worker_pid = line.split()[0]
+            perf_result = subprocess.check_output(['sudo', 'perf', 'stat', '-e', 'L1-dcache-loads,L1-dcache-load-misses,L1-dcache-store,icache.hit,icache.misses,icache.ifdata_stall,LLC-loads,LLC-load-misses,LLC-stores,L2_RQSTS.ALL_DEMAND_MISS', '-p', vpp_worker_pid, 'sleep', str(duration)], stderr=subprocess.STDOUT).decode()
+            perf_result = remove_CtrlChars(perf_result)
+            match = perf_pattern.search(perf_result)
+            if match:
+                perf_section = match.group(2)
+                lines = perf_section.strip().split("\n")
+                perf_stat = {}
+                for line in lines:
+                    parts = line.split()
+                    name = parts[1]
+                    value = int(parts[0].replace(',', ''))
+                    perf_stat[name] = value
+                perf_data = PerfData()
+                perf_data.batch_size_setting = key_tuple[0][1]
+                perf_data.L1_dcache_loads = perf_stat.get('L1-dcache-loads', None)
+                perf_data.L1_dcache_load_misses = perf_stat.get('L1-dcache-load-misses', None)
+                perf_data.L1_dcache_store = perf_stat.get('L1-dcache-store', None)
+                perf_data.icache_hit = perf_stat.get('icache.hit', None)
+                perf_data.icache_misses = perf_stat.get('icache.misses', None)
+                perf_data.icache_ifdata_stall = perf_stat.get('icache.ifdata_stall', None)
+                perf_data.LLC_loads = perf_stat.get('LLC-loads', None)
+                perf_data.LLC_load_misses = perf_stat.get('LLC-load-misses', None)
+                perf_data.LLC_stores = perf_stat.get('LLC-stores', None)
+                perf_data.L2_RQSTS_ALL_DEMAND_MISS = perf_stat.get('L2_RQSTS.ALL_DEMAND_MISS', None)
+                perf_data.create_time =  now
+                perf_data.deleted = False
+                DBSession.add(perf_data)
+                DBSession.commit()
+            else:
+                print("No match found")
 
 if __name__ == "__main__":
     reset_stats()
@@ -259,4 +334,3 @@ if __name__ == "__main__":
 #         stats = get_stats()
 #         # print(stats)
 #         time.sleep(1)
-
