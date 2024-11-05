@@ -240,6 +240,9 @@ typedef struct
   /* error string */
   clib_error_t *errors;
   dpdk_port_conf_t conf;
+
+  volatile u32 batch_size;
+  volatile f64 timeout_sec;
 } dpdk_device_t;
 
 #define DPDK_STATS_POLL_INTERVAL      (10.0)
