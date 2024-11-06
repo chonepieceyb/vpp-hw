@@ -243,8 +243,21 @@ def _act(kt):
     print(f"Running command: {command}")
     subprocess.run(command, check=True)
 
+def _act_dpdk_input(kt):
+    node, batch_size, timeout = kt[0]
+    subprocess.run(["sudo", "vppctl", "-s", "/run/vpp/remote/cli_remote.sock", "set", "dpdk", "batchsize", "Ethernet0", "batchsize", str(batch_size), "timeout", str(timeout)], check=True)
 
-def _gen_combinations(partial=None):
+# 单独修改dpdk-input节点的batch_size和timeout
+def _gen_combinations_dpdk_input(partial=None):
+    nodes = ['dpdk-input']
+    batch_sizes = range(16, 256+16, 16)
+    timeouts = [1.0]
+    for batch_size in batch_sizes:
+        for timeout in timeouts:
+            yield [[node, batch_size, timeout] for node in nodes]
+
+# 所有节点的batch_size和timeout都相同
+def _gen_combinations_same_babtch(partial=None):
     nodes = ["ip4-input-no-checksum", "ip6-input", "nat-pre-in2out", "ip4-inacl"]
     batch_sizes = range(16, 256+16, 16)
     timeouts = [90000000]
@@ -252,26 +265,27 @@ def _gen_combinations(partial=None):
         for timeout in timeouts:
             yield [[node, batch_size, timeout] for node in nodes]
 
-# def _gen_combinations(partial=None):
-#     nodes = ["ip4-input-no-checksum", "ip6-input", "nat-pre-in2out", "ip4-inacl"]
-#     batch_sizes = [16, 32, 48, 64, 96, 128, 160, 192, 224, 256]
-#     timeouts = [90000000]
+# 生成所有节点的batch_size和timeout的组合
+def _gen_combinations(partial=None):
+    nodes = ["ip4-input-no-checksum", "ip6-input", "nat-pre-in2out", "ip4-inacl"]
+    batch_sizes = [16, 32, 48, 64, 96, 128, 160, 192, 224, 256]
+    timeouts = [90000000]
 
-#     for batch_size in batch_sizes:
-#         for timeout in timeouts:
-#             if partial is None:
-#                 new_partial = []
-#             else:
-#                 new_partial = list(partial)
-#             new_partial.append([nodes[len(new_partial)], batch_size, timeout])
-#             if len(new_partial) == len(nodes):
-#                 yield new_partial
-#             else:
-#                 for combination in _gen_combinations(new_partial):
-#                     yield combination
+    for batch_size in batch_sizes:
+        for timeout in timeouts:
+            if partial is None:
+                new_partial = []
+            else:
+                new_partial = list(partial)
+            new_partial.append([nodes[len(new_partial)], batch_size, timeout])
+            if len(new_partial) == len(nodes):
+                yield new_partial
+            else:
+                for combination in _gen_combinations(new_partial):
+                    yield combination
 
 def record_exp_data():
-    for key_tuple in _gen_combinations():
+    for key_tuple in _gen_combinations_same_babtch():
         print(f"Running with key_tuple: {key_tuple}", file=sys.stderr)
         for i in range(exp_repeat_count):
             _act(key_tuple)
@@ -283,10 +297,12 @@ def record_exp_data():
 def record_perf_data():
     perf_pattern = re.compile(r"Performance counter stats for process id '(\d+)':\s*\n*((?:.*\n)*).*seconds time elapsed")
     now = datetime.now()
-    for key_tuple in _gen_combinations():
+    # [修改这里控制生成key_tuple的方式]
+    for key_tuple in _gen_combinations_dpdk_input():
         print(f"Running with key_tuple: {key_tuple}", file=sys.stderr)
         for i in range(exp_repeat_count):
-            _act(key_tuple)
+            # [修改这里控制改batch_size的方式]
+            _act_dpdk_input(key_tuple)
             # sudo perf stat -e L1-dcache-loads,L1-dcache-load-misses,L1-dcache-store,icache.hit,icache.misses,icache.ifdata_stall,LLC-loads,LLC-load-misses,LLC-stores,L2_RQSTS.ALL_DEMAND_MISS -p $(ps -eLo pid,comm | grep vpp_wk_0 | awk '{print $1}') sleep 3
             ps_reault = subprocess.check_output(['ps', '-eLo', 'pid,comm']).decode().split('\n')
             for line in ps_reault:
@@ -325,7 +341,7 @@ def record_perf_data():
 
 if __name__ == "__main__":
     reset_stats()
-    record_exp_data()
+    record_perf_data()
 
 # if __name__ == "__main__":
 #     reset_stats()
