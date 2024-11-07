@@ -305,6 +305,8 @@ dpdk_lib_init (dpdk_main_t * dm)
       dm->conf->cycle_per_ns = cycle_per_second / 1000000000;
       dm->conf->cycle_per_us = cycle_per_second / 1000000;
       dm->conf->cycle_per_ms = cycle_per_second / 1000;
+      dm->conf->cycle_per_s = cycle_per_second;
+
       dpdk_log_info("cycle_per_ns: %u, cycle_per_second: %lu", dm->conf->cycle_per_ns, cycle_per_second);
 
       devconf = dpdk_find_startup_config (&di);

@@ -383,20 +383,22 @@ reset_packets_latency_fn (vlib_main_t * vm,
 {
   dpdk_main_t *dm = &dpdk_main;
   dpdk_device_t *xd = dm->devices;
+  u64 now = clib_cpu_time_now();
   vec_foreach (xd, dm->devices)
   {
     // reset total latency
     xd->total_lat_stats.total_latency = 0;
     xd->total_lat_stats.total_pkts = 0;
     xd->total_lat_stats.timeout_pkts = 0;
+    xd->last_timestamp = now;
     // reset each protocol latency
     for(int i = 0; i < MAX_LATENCY_TRACE_COUNT; i++) {
       xd->lat_stats[i].total_latency = 0;
       xd->lat_stats[i].total_pkts = 0;
       xd->lat_stats[i].timeout_pkts = 0;
     }
+    vlib_cli_output(vm, "device: %s, current cycle_per_ns: %lu, cycle_per_us: %lu, cycle_per_ms: %lu, cycle_per_s: %lu", xd->name, xd->cycle_per_ns, xd->cycle_per_us, xd->cycle_per_ms, xd->cycle_per_s);
   }
-  vlib_cli_output(vm, "All latency storage has been reset, current cycle_per_ns: %lu", xd->cycle_per_ns);
   return 0;
 }
 
@@ -425,26 +427,33 @@ show_packets_latency_fn (vlib_main_t * vm,
 {
   dpdk_main_t *dm = &dpdk_main;
   dpdk_device_t *xd = dm->devices;
+  f64 now = vlib_time_now (vm);
+  f64 last_timestamp = xd->last_timestamp;
+  f64 time_diff_s = now - last_timestamp;
+
+  vlib_cli_output(vm, "current time_diff(s): %llf", time_diff_s);
 
   vec_foreach (xd, dm->devices)
   {
     // print total latency
     uint64_t avg_lat = 0;
+    uint64_t avg_throughput = (uint64_t) ((xd->total_lat_stats.total_pkts) / time_diff_s);;
     uint64_t imissed = xd->stats.imissed - xd->last_stats.imissed;
 
     if (xd->total_lat_stats.total_pkts != 0) {
       avg_lat = xd->total_lat_stats.total_latency / xd->total_lat_stats.total_pkts;
     }
-    vlib_cli_output (vm, "%s, total_lat(ns): %lu, pkts: %lu, timeout_pkts: %lu, avg_lat(ns): %lu, imissed: %lu", xd->name, xd->total_lat_stats.total_latency, xd->total_lat_stats.total_pkts, xd->total_lat_stats.timeout_pkts, avg_lat, imissed);
+    vlib_cli_output (vm, "%s, avg_throughput(pkt/s): %lu, avg_lat(ns): %lu, timeout_pkts: %lu, total_pkts: %lu, imissed: %lu", xd->name, avg_throughput, avg_lat, xd->total_lat_stats.timeout_pkts, xd->total_lat_stats.total_pkts, imissed);
 
     // print each protocol latency
     for(int i = 0; i < MAX_LATENCY_TRACE_COUNT; i++) {
       uint64_t avg_lat = 0;
+      uint64_t avg_throughput = (uint64_t) ((xd->lat_stats[i].total_pkts) / time_diff_s);
 
       if (xd->lat_stats[i].total_pkts != 0) {
         avg_lat = xd->lat_stats[i].total_latency / xd->lat_stats[i].total_pkts;
       }
-      vlib_cli_output (vm, "%s, protocol_identifier: %d, total_lat(ns): %lu, pkts: %lu, timeout_pkts: %lu, avg_lat(ns): %lu", xd->name, i, xd->lat_stats[i].total_latency, xd->lat_stats[i].total_pkts, xd->lat_stats[i].timeout_pkts, avg_lat);
+      vlib_cli_output (vm, "%s, protocol_identifier: %d, avg_throughput(pkt/s): %lu, avg_lat(ns): %lu, timeout_pkts: %lu, total_pkts: %lu", xd->name, i, avg_throughput, avg_lat, xd->lat_stats[i].timeout_pkts, xd->lat_stats[i].total_pkts);
     }
   }
   return 0;
@@ -475,17 +484,24 @@ show_packets_latency_and_reset_fn (vlib_main_t * vm,
 {
   dpdk_main_t *dm = &dpdk_main;
   dpdk_device_t *xd = dm->devices;
+  f64 now = vlib_time_now (vm);
+  f64 last_timestamp = xd->last_timestamp;
+  f64 time_diff_s = now - last_timestamp;
+  xd->last_timestamp = now;
+
+  vlib_cli_output(vm, "current time_diff(s): %llf", time_diff_s);
 
   vec_foreach (xd, dm->devices)
   {
     // print total latency
     uint64_t avg_lat = 0;
     uint64_t imissed = xd->stats.imissed - xd->last_stats.imissed;
+    uint64_t avg_throughput = (uint64_t) ((xd->total_lat_stats.total_pkts) / time_diff_s);
 
     if (xd->total_lat_stats.total_pkts != 0) {
       avg_lat = xd->total_lat_stats.total_latency / xd->total_lat_stats.total_pkts;
     }
-    vlib_cli_output (vm, "%s, total_lat(ns): %lu, pkts: %lu, timeout_pkts: %lu, avg_lat(ns): %lu, imissed: %lu", xd->name, xd->total_lat_stats.total_latency, xd->total_lat_stats.total_pkts, xd->total_lat_stats.timeout_pkts, avg_lat, imissed);
+    vlib_cli_output (vm, "%s, avg_throughput(pkt/s): %lu, avg_lat(ns): %lu, timeout_pkts: %lu, total_pkts: %lu, imissed: %lu", xd->name, avg_throughput, avg_lat, xd->total_lat_stats.timeout_pkts, xd->total_lat_stats.total_pkts, imissed);
     xd->total_lat_stats.total_latency = 0;
     xd->total_lat_stats.total_pkts = 0;
     xd->total_lat_stats.timeout_pkts = 0;
@@ -493,11 +509,12 @@ show_packets_latency_and_reset_fn (vlib_main_t * vm,
     // print each protocol latency
     for(int i = 0; i < MAX_LATENCY_TRACE_COUNT; i++) {
       uint64_t avg_lat = 0;
+      uint64_t avg_throughput = (uint64_t) ((xd->lat_stats[i].total_pkts) / time_diff_s);
 
       if (xd->lat_stats[i].total_pkts != 0) {
         avg_lat = xd->lat_stats[i].total_latency / xd->lat_stats[i].total_pkts;
       }
-      vlib_cli_output (vm, "%s, protocol_identifier: %d, total_lat(ns): %lu, pkts: %lu, timeout_pkts: %lu, avg_lat(ns): %lu", xd->name, i, xd->lat_stats[i].total_latency, xd->lat_stats[i].total_pkts, xd->lat_stats[i].timeout_pkts, avg_lat);
+      vlib_cli_output (vm, "%s, protocol_identifier: %d, avg_throughput(pkt/s): %lu, avg_lat(ns): %lu, timeout_pkts: %lu, total_pkts: %lu", xd->name, i, avg_throughput, avg_lat, xd->lat_stats[i].timeout_pkts, xd->lat_stats[i].total_pkts);
       xd->lat_stats[i].total_latency = 0;
       xd->lat_stats[i].total_pkts = 0;
       xd->lat_stats[i].timeout_pkts = 0;

@@ -227,9 +227,14 @@ typedef struct
   u64 cycle_per_ns;  /* convert CPU cycles to time (ns) */
   u64 cycle_per_us;  /* convert CPU cycles to time (us) */
   u64 cycle_per_ms;  /* convert CPU cycles to time (ms) */
+  u64 cycle_per_s;  /* convert CPU cycles to time (s) */
+
   /* latency calculation used temp store */
   struct dpdk_lat_t lat_stats[MAX_LATENCY_TRACE_COUNT];
   struct dpdk_lat_t total_lat_stats;
+
+  /* last timestamp used in avg throughput calculation */
+  f64 last_timestamp;
 
   /* mac address */
   u8 *default_mac_address;
@@ -331,6 +336,7 @@ typedef struct
   u64 cycle_per_ns;  /* convert CPU cycles to time (ns) */
   u64 cycle_per_us;  /* convert CPU cycles to time (us) */
   u64 cycle_per_ms;  /* convert CPU cycles to time (ms) */
+  u64 cycle_per_s;  /* convert CPU cycles to time (s) */
 
 } dpdk_config_main_t;
 
