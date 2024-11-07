@@ -261,6 +261,8 @@ void dpdk_device_setup(dpdk_device_t *xd) {
   xd->cycle_per_ns = dm->conf->cycle_per_ns;
   xd->cycle_per_us = dm->conf->cycle_per_us;
   xd->cycle_per_ms = dm->conf->cycle_per_ms;
+  xd->cycle_per_s = dm->conf->cycle_per_s;
+  xd->last_timestamp = vlib_time_now(vm);
 
 retry:
   rv = rte_eth_dev_configure (xd->port_id, xd->conf.n_rx_queues,
