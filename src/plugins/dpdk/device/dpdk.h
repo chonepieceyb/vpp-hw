@@ -59,6 +59,9 @@ typedef uint16_t dpdk_portid_t;
 // Timeout packet count thresholder
 #define TIME_OUT_THRESHOULDER_NS 10000
 
+// maxmium number of protocol latency trace count
+#define MAX_LATENCY_TRACE_COUNT 20
+
 /* timestamp field type */
 typedef uint64_t tsc_t;
 
@@ -225,7 +228,8 @@ typedef struct
   u64 cycle_per_us;  /* convert CPU cycles to time (us) */
   u64 cycle_per_ms;  /* convert CPU cycles to time (ms) */
   /* latency calculation used temp store */
-  struct dpdk_lat_t lat_stats;
+  struct dpdk_lat_t lat_stats[MAX_LATENCY_TRACE_COUNT];
+  struct dpdk_lat_t total_lat_stats;
 
   /* mac address */
   u8 *default_mac_address;
