@@ -495,7 +495,9 @@ typedef struct
     };
   } nat;
 
-  u32 unused[8];
+  // use 8 byte unused space to store the protocol identifier
+  u64 protocal_identifier;
+  u32 unused[6];
 } vnet_buffer_opaque2_t;
 
 #define vnet_buffer2(b) ((vnet_buffer_opaque2_t *) (b)->opaque2)

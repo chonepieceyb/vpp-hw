@@ -72,8 +72,9 @@ static uint16_t add_timestamps(uint16_t port , uint16_t qidx __rte_unused,
   unsigned i;
   uint64_t now = rte_rdtsc();
   dpdk_log_debug("tsc_dynfield_offset: %d used at add_timestamps, nic: %d", __xd->tsc_dynfield_offset, __xd->hw_if_index);
-  for (i = 0; i < nb_pkts; i++)
+  for (i = 0; i < nb_pkts; i++) {
     *tsc_field(pkts[i], __xd->tsc_dynfield_offset) = now;
+  }
   return nb_pkts;
 }
 /* >8 End of callback addition and application. */
@@ -87,25 +88,42 @@ static uint16_t calc_latency(uint16_t port, uint16_t qidx __rte_unused,
   if(unlikely(__xd->hw_if_index == 0)) {
     return nb_pkts;
   }
-  uint64_t total_latency = 0;
+  uint64_t accumulated_latency[MAX_LATENCY_TRACE_COUNT] = {0};
   uint64_t now = rte_rdtsc();
+  struct dpdk_lat_t *lat_stats = __xd->lat_stats;
+  uint64_t total_lat = 0;
   unsigned i;
 
   for (i = 0; i < nb_pkts; i++) {
     uint64_t packet_ts = *tsc_field(pkts[i], __xd->tsc_dynfield_offset);
     uint64_t packet_latency = now - packet_ts;
 
+    vlib_buffer_t *pkt_vlib_buf = vlib_buffer_from_rte_mbuf(pkts[i]);
+    u64 protocal_identifier = ((vnet_buffer_opaque2_t *) (pkt_vlib_buf)->opaque2)->protocal_identifier;
+
+    // If the protocal_identifier is greater than MAX_LATENCY_TRACE_COUNT, it is considered as invalid.
+    if (unlikely(protocal_identifier >= MAX_LATENCY_TRACE_COUNT)) {
+        dpdk_log_err("protocal_identifier: %d is greater than MAX_LATENCY_TRACE_COUNT", protocal_identifier);
+        continue;
+    }
+
     // If the packet_latency is greater than the TIME_OUT_THRESHOULDER_NS, it is considered as timeout.
     if (packet_latency > TIME_OUT_THRESHOULDER_NS) {
-      __xd->lat_stats.timeout_pkts++;
+      lat_stats[protocal_identifier].timeout_pkts++;
     }
-    total_latency += packet_latency;
 
+    accumulated_latency[protocal_identifier] += packet_latency;
+    total_lat += packet_latency;
+    __xd->lat_stats[protocal_identifier].total_pkts++;
   }
+  __xd->total_lat_stats.total_pkts += nb_pkts;
 
   /* actually total_latency store the latency time(ns) */
-  __xd->lat_stats.total_latency += total_latency / __xd->cycle_per_ns;
-  __xd->lat_stats.total_pkts += nb_pkts;
+  for (i = 0; i < MAX_LATENCY_TRACE_COUNT; i++) {
+    __xd->lat_stats[i].total_latency +=
+        accumulated_latency[i] / __xd->cycle_per_ns;
+  }
+  __xd->total_lat_stats.total_latency += total_lat / __xd->cycle_per_ns;
 
   return nb_pkts;
 }
