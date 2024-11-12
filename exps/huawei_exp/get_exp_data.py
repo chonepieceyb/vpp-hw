@@ -1,3 +1,4 @@
+import argparse
 import dataclasses
 import json
 import re
@@ -149,15 +150,19 @@ class VPPCtl(CommandLineTool):
         self._invoke(['perfmon', 'reset'], **kwargs)
 
     @dataclass
-    class DPDKBatchConfig:
+    class DPDKInterfaceBatchConfig:
         size: int
         """Batch size of `dpdk-input`."""
         timeout: float
         """Timeout (in seconds) of `dpdk-input`."""
 
+    @dataclass
+    class DPDKBatchConfig:
+        interfaces: Dict[str, 'VPPCtl.DPDKInterfaceBatchConfig'] = field(default_factory=dict)
+
     def set_dpdk_batchsize(
         self,
-        config: Mapping[str, Union[DPDKBatchConfig, Mapping[str, Any]]],
+        config: Union[DPDKBatchConfig, Mapping[str, Union[DPDKInterfaceBatchConfig, Mapping[str, Any]]]],
         **kwargs: Any,
     ) -> None:
         """
@@ -165,26 +170,32 @@ class VPPCtl(CommandLineTool):
 
         :param config: Configuration or mapping from interface name to the configuration
         """
+        if isinstance(config, self.DPDKBatchConfig):
+            config = config.interfaces
         if len(config) != 1:
             raise ValueError('config must have exactly one element')
-        interface, batch_config = next(iter(config.items()))
-        if not isinstance(batch_config, self.DPDKBatchConfig):
-            batch_config = self.DPDKBatchConfig(**batch_config)
+        interface, value = next(iter(config.items()))
+        if not isinstance(value, self.DPDKInterfaceBatchConfig):
+            value = self.DPDKInterfaceBatchConfig(**value)
         self._invoke(
-            ['set', 'dpdk', 'batchsize', interface, str(batch_config.size), 'timeout', str(batch_config.timeout)],
+            ['set', 'dpdk', 'batchsize', interface, str(value.size), 'timeout', str(value.timeout)],
             **kwargs,
         )
 
     @dataclass
-    class BatchConfig:
+    class NodeBatchConfig:
         size: Optional[int] = field(default=None)
         """Batch size of the node; set to `None` to not change"""
         timeout: Optional[int] = field(default=None)
         """Timeout (in us) of the node; set to `None` to not change"""
 
+    @dataclass
+    class BatchConfig:
+        nodes: Dict[Union[int, str], 'VPPCtl.NodeBatchConfig'] = field(default_factory=dict)
+
     def set_node_batch(
         self,
-        config: Mapping[Union[int, str], Union[BatchConfig, Mapping[str, Any]]],
+        config: Union[BatchConfig, Mapping[Union[int, str], Union[NodeBatchConfig, Mapping[str, Any]]]],
         **kwargs: Any,
     ) -> None:
         """
@@ -193,13 +204,15 @@ class VPPCtl(CommandLineTool):
         :param config: Mapping of node index or name to the configuration
         """
         args = ['set', 'node', 'batch']
+        if isinstance(config, self.BatchConfig):
+            config = config.nodes
         for k, c in config.items():
             if isinstance(k, int):
                 args += ['index', str(k)]
             else:
                 args += [str(k)]
-            if not isinstance(c, self.BatchConfig):
-                c = self.BatchConfig(**c)
+            if not isinstance(c, self.NodeBatchConfig):
+                c = self.NodeBatchConfig(**c)
             if c.size is not None:
                 args += ['size', str(c.size)]
             if c.timeout is not None:
@@ -230,29 +243,37 @@ class VPPCtl(CommandLineTool):
         imissed: int
         protocols: Dict[int, 'VPPCtl.DPDKProtocolStat'] = field(default_factory=dict)
 
-    def show_dpdk_latency(self, **kwargs: Any) -> Dict[str, DPDKInterfaceStat]:
+    @dataclass
+    class DPDKStat:
+        """
+        DPDK statistics.
+        """
+
+        interfaces: Dict[str, 'VPPCtl.DPDKInterfaceStat'] = field(default_factory=dict)
+
+    def show_dpdk_latency(self, **kwargs: Any) -> DPDKStat:
         """
         Call `vppctl show dpdk latency` and return the parsed output.
 
-        :returns: Parsed output (mapping from interface to statistics)
+        :returns: Parsed output
         """
-        res = {}
         output = self._invoke(['show', 'dpdk', 'latency'], **kwargs).stdout.decode()
         line_iterator = iter(output.strip().split('\n'))
         next(line_iterator)  # skip 'current time_diff(s): 1619'
+        interfaces_data = {}
         for line in line_iterator:
             interface, *stat_parts = line.split(',')
             stat_data = {self._normalize_identifier(name): int(value) for name, value in map(lambda s: s.split(':'), stat_parts)}
             protocol = stat_data.pop('protocol_identifier', None)
             if protocol is None:
-                res[interface] = self.DPDKInterfaceStat(**stat_data)  # type: ignore
+                interfaces_data[interface] = self.DPDKInterfaceStat(**stat_data)  # type: ignore
             else:
                 # Interface-level stats always come before protocol-level stats, so this is safe
-                res[interface].protocols[protocol] = self.DPDKProtocolStat(**stat_data)
-        return res
+                interfaces_data[interface].protocols[protocol] = self.DPDKProtocolStat(**stat_data)
+        return self.DPDKStat(interfaces=interfaces_data)
 
     @dataclass
-    class PerfmonStat:
+    class PerfmonNodeStat:
         """
         Output of `vppctl show perfmon statistics` for each node.
         """
@@ -262,37 +283,53 @@ class VPPCtl(CommandLineTool):
         l2_miss_per_pkt: float
         l3_miss_per_pkt: float
 
-    def show_perfmon_statistics(self, include_threads: Optional[Iterable[str]] = None, **kwargs: Any) -> Dict[str, Dict[str, PerfmonStat]]:
+    @dataclass
+    class PerfmonThreadStat:
+        """
+        Output of `vppctl show perfmon statistics` for each thread.
+        """
+
+        nodes: Dict[str, 'VPPCtl.PerfmonNodeStat'] = field(default_factory=dict)
+
+    @dataclass
+    class PerfmonStat:
+        """
+        Output of `vppctl show perfmon statistics`.
+        """
+
+        threads: Dict[str, 'VPPCtl.PerfmonThreadStat'] = field(default_factory=dict)
+
+    def show_perfmon_statistics(self, include_threads: Optional[Iterable[str]] = None, **kwargs: Any) -> PerfmonStat:
         """
         Call `vppctl show perfmon statistics` and return the parsed output.
 
         :param include_threads: Threads to include in the output; if `None`, include all threads
 
-        :returns: Parsed output (mapping from thread to node to statistics header to value)
+        :returns: Parsed output
         """
-        res = {}
         output = self._invoke(['show', 'perfmon', 'statistics'], **kwargs).stdout.decode()
         output = self._remove_control_chars(output)
         line_iterator = iter(output.strip().split('\n'))
         next(line_iterator)  # skip title
         next(line_iterator)  # skip header (we assume the order of stats is consistent with fields in PerfmonStat, as it is difficult to parse headers)
         thread = None
-        data = {}
+        threads_data = {}
+        nodes_data = {}
         for line in line_iterator:
             if '(' in line:  # e.g. 'vpp_wk_0 (1)'
                 if thread is not None and (include_threads is None or thread in include_threads):
-                    res[thread] = data
+                    threads_data[thread] = nodes_data
                 thread = line.split()[0]
-                data = {}
+                nodes_data = {}
             else:
                 node, *values = line.split()
-                data[node] = self.PerfmonStat(*map(float, values))
+                nodes_data[node] = self.PerfmonNodeStat(*map(float, values))
         if thread is not None and (include_threads is None or thread in include_threads):
-            res[thread] = data
-        return res
+            threads_data[thread] = self.PerfmonThreadStat(nodes=nodes_data)
+        return self.PerfmonStat(threads=threads_data)
 
     @dataclass
-    class RuntimeStat:
+    class RuntimeNodeStat:
         """
         Output of `vppctl show runtime` for each node.
         """
@@ -306,18 +343,47 @@ class VPPCtl(CommandLineTool):
         avg_dpc_per_call: float
         total_dto: float
 
-    _RUNTIME_THREAD_TITLE_PATTERN = re.compile(r'^Thread \d+ (.+) \(lcore \d+\)$')
+    @dataclass
+    class RuntimeVectorRateStat:
+        """
+        Output of `vppctl show runtime` for vector rates.
+        """
 
-    def show_runtime(self, include_threads: Optional[Iterable[str]] = None, **kwargs: Any) -> Dict[str, Dict[str, RuntimeStat]]:
+        in_: float
+        out: float
+        drop: float
+        punt: float
+
+    @dataclass
+    class RuntimeThreadStat:
+        """
+        Output of `vppctl show runtime` for each thread.
+        """
+
+        vector_rates: 'VPPCtl.RuntimeVectorRateStat'
+        nodes: Dict[str, 'VPPCtl.RuntimeNodeStat'] = field(default_factory=dict)
+
+    @dataclass
+    class RuntimeStat:
+        """
+        Output of `vppctl show runtime`.
+        """
+
+        threads: Dict[str, 'VPPCtl.RuntimeThreadStat'] = field(default_factory=dict)
+
+    _RUNTIME_THREAD_TITLE_PATTERN = re.compile(r'^Thread \d+ (.+) \(lcore \d+\)$')
+    _RUNTIME_THREAD_VECTOR_RATES_PATTERN = re.compile(r'^vector rates in (.+), out (.+), drop (.+), punt (.+)$')
+
+    def show_runtime(self, include_threads: Optional[Iterable[str]] = None, **kwargs: Any) -> RuntimeStat:
         """
         Call `vppctl show runtime` and return the parsed output.
 
         :param include_threads: Threads to include in the output; if `None`, include all threads
 
-        :returns: Parsed output (mapping from thread to node to statistics)
+        :returns: Parsed output
         """
-        res = {}
         output = self._invoke(['show', 'runtime'], **kwargs).stdout.decode()
+        threads_data = {}
         sections = list(map(str.strip, output.split('---------------')))
         for section in sections:
             line_iterator = iter(section.strip().split('\n'))
@@ -325,19 +391,22 @@ class VPPCtl(CommandLineTool):
             if include_threads is not None and thread not in include_threads:
                 continue
             next(line_iterator)  # skip 'Time 168135.7, 10 sec internal node vector rate 0.00 loops/sec 159186.44'
-            next(line_iterator)  # skip 'vector rates in 0.0000e0, out 0.0000e0, drop 0.0000e0, punt 0.0000e0'
+            vector_rates_data = []
+            for value in self._RUNTIME_THREAD_VECTOR_RATES_PATTERN.fullmatch(next(line_iterator).strip()).groups():  # type: ignore
+                vector_rates_data.append(float(value))
+            vector_rates_data = self.RuntimeVectorRateStat(*vector_rates_data)
             next(line_iterator)  # skip headers (we assume the order of stats is consistent with fields in RuntimeStat, as it is difficult to parse headers)
-            data = {}
+            nodes_data = {}
             for line in line_iterator:
                 node, state, *values = line.split()
-                for _ in range(len(values) - len(fields(self.RuntimeStat)) + 1):  # 'state' can be a multi-word string
+                for _ in range(len(values) - len(fields(self.RuntimeNodeStat)) + 1):  # 'state' can be a multi-word string
                     state += ' ' + values.pop(0)
-                data[node] = self.RuntimeStat(state, *map(lambda s: float(s), values))
-            res[thread] = data
-        return res
+                nodes_data[node] = self.RuntimeNodeStat(state, *map(lambda s: float(s), values))
+            threads_data[thread] = self.RuntimeThreadStat(vector_rates=vector_rates_data, nodes=nodes_data)
+        return self.RuntimeStat(threads=threads_data)
 
 
-def generate_dpdk_batch_configs(interface: str, sizes: Iterable[int], timeouts: Iterable[float]) -> Iterable[Dict[str, VPPCtl.DPDKBatchConfig]]:
+def generate_dpdk_batch_configs(interface: str, sizes: Iterable[int], timeouts: Iterable[float]) -> Iterable[VPPCtl.DPDKBatchConfig]:
     """
     Generate DPDK batching configurations.
 
@@ -349,10 +418,11 @@ def generate_dpdk_batch_configs(interface: str, sizes: Iterable[int], timeouts: 
     """
     for size in sizes:
         for timeout in timeouts:
-            yield {interface: VPPCtl.DPDKBatchConfig(size, timeout)}
+            interfaces_data = {interface: VPPCtl.DPDKInterfaceBatchConfig(size, timeout)}
+            yield VPPCtl.DPDKBatchConfig(interfaces=interfaces_data)
 
 
-def generate_batch_configs(nodes: List[str], sizes: Iterable[int], timeouts: Iterable[int]) -> Iterable[Dict[str, VPPCtl.BatchConfig]]:
+def generate_batch_configs(nodes: List[str], sizes: Iterable[int], timeouts: Iterable[int]) -> Iterable[VPPCtl.BatchConfig]:
     """
     Generate node batching configurations.
 
@@ -364,12 +434,16 @@ def generate_batch_configs(nodes: List[str], sizes: Iterable[int], timeouts: Ite
     """
     for size in sizes:
         for timeout in timeouts:
-            yield {node: VPPCtl.BatchConfig(size, timeout) for node in nodes}
+            nodes_data: Dict[Union[str, int], VPPCtl.NodeBatchConfig] = {node: VPPCtl.NodeBatchConfig(size, timeout) for node in nodes}
+            yield VPPCtl.BatchConfig(nodes=nodes_data)
 
 
 def generate_batch_config_combinations(
-    nodes: List[str], sizes: Iterable[int], timeouts: Iterable[int], partial: Optional[Dict[str, VPPCtl.BatchConfig]] = None
-) -> Iterable[Dict[str, VPPCtl.BatchConfig]]:
+    nodes: List[str],
+    sizes: Iterable[int],
+    timeouts: Iterable[int],
+    partial: Optional[Dict[Union[int, str], VPPCtl.NodeBatchConfig]] = None,
+) -> Iterable[VPPCtl.BatchConfig]:
     """
     Generate all possible combinations of node batching configurations.
 
@@ -382,11 +456,11 @@ def generate_batch_config_combinations(
     if partial is None:
         partial = {}
     if len(partial) == len(nodes):
-        yield partial
+        yield VPPCtl.BatchConfig(nodes=partial)
     else:
         for size in sizes:
             for timeout in timeouts:
-                new_partial = {**partial, nodes[len(partial)]: VPPCtl.BatchConfig(size, timeout)}
+                new_partial = {**partial, nodes[len(partial)]: VPPCtl.NodeBatchConfig(size, timeout)}
                 yield from generate_batch_config_combinations(nodes, sizes, timeouts, new_partial)
 
 
@@ -446,13 +520,13 @@ class Perf(CommandLineTool):
         return self.CacheData(**data)
 
 
+def _as_serializable(data: Any):
+    return dataclasses._asdict_inner(data, dict_factory=dict)  # type: ignore
+
+
 class _ExperimentRecorder:
     def __init__(self, verbose: bool = False) -> None:
         self._verbose = verbose
-
-    @classmethod
-    def _as_serializable(cls, data: Any):
-        return dataclasses._asdict_inner(data, dict_factory=dict)  # type: ignore
 
 
 class SQLAlchemyExperimentRecorder(_ExperimentRecorder):
@@ -483,7 +557,7 @@ class SQLAlchemyExperimentRecorder(_ExperimentRecorder):
             'setting': setting,
             'stat': stat,
         }
-        data = self._flatten_dict(self._as_serializable(data))
+        data = self._flatten_dict(_as_serializable(data))
         if self._engine is None:
             if self._verbose:
                 print('Initializing engine and table', file=sys.stderr)
@@ -561,7 +635,7 @@ class JSONLExperimentRecorder(_ExperimentRecorder):
 
     def __call__(self, experiment_id: str, setting: Any, stat: Any):
         path = self._path_template.format(experiment_id=experiment_id)
-        data = self._as_serializable(dict(experiment_id=experiment_id, setting=setting, stat=stat))
+        data = _as_serializable(dict(experiment_id=experiment_id, setting=setting, stat=stat))
         with open(path, 'a') as f:
             f.write(json.dumps(data, indent=None) + '\n')
 
@@ -626,6 +700,15 @@ def _find_process(include_comm: Iterable[str], raise_on_not_found: bool = True) 
     return pids
 
 
+def _merge_dict(dest: Dict[Any, Any], src: Dict[Any, Any]) -> Dict[Any, Any]:
+    for key, value in src.items():
+        if key in dest and isinstance(dest[key], dict) and isinstance(value, dict):
+            dest[key] = _merge_dict(dest[key], value)
+        else:
+            dest[key] = value
+    return dest
+
+
 BATCH_NODES = ['ip4-lookup', 'ip6-input', 'nat-pre-in2out', 'ip4-inacl']
 BATCH_SIZES = [32, 64, 96, 128, 160, 192, 224, 256]
 BATCH_TIMEOUTS = [100]
@@ -635,7 +718,8 @@ DPDK_BATCH_SIZES = BATCH_SIZES.copy()
 DPDK_BATCH_TIMEOUTS = BATCH_TIMEOUTS.copy()
 
 DURATION = 10
-REPEAT_COUNT = 5
+REPEAT_COUNT = 3
+REPEAT_INTERVAL = 0
 THREADS = ['vpp_wk_0']
 
 RECORD_URL_TEMPLATE = 'sqlite:///vpp_exp_{experiment_id}.sqlite'
@@ -647,11 +731,13 @@ vppctl = VPPCtl(['sudo', 'vppctl', '-s', '/run/vpp/remote/cli_remote.sock'], ver
 perf = Perf(['sudo', 'perf'], verbose=VERBOSE)
 
 
-if __name__ == '__main__':
+def main():
+    # Options for 'settings'
     node_batch_combinations = generate_batch_config_combinations(BATCH_NODES, BATCH_SIZES, BATCH_TIMEOUTS)
     node_batch_configs = generate_batch_configs(BATCH_NODES, BATCH_SIZES, BATCH_TIMEOUTS)
     dpdk_batch_configs = generate_dpdk_batch_configs(DPDK_RX_INTERFACE, DPDK_BATCH_SIZES, DPDK_BATCH_TIMEOUTS)
 
+    # Options for 'apply_func'
     def apply_vpp_node_batch(setting):
         vppctl.set_node_batch(setting)
         _reset_all_stats()
@@ -660,26 +746,36 @@ if __name__ == '__main__':
         vppctl.set_dpdk_batchsize(setting)
         _reset_all_stats()
 
+    # Options for 'stat_func'
     def stat_vpp_nodes():
         res = {}
-        res.update(vppctl.show_perfmon_statistics(include_threads=THREADS))
-        res.update(vppctl.show_dpdk_latency())
-        res.update(vppctl.show_runtime(include_threads=THREADS))
+        for data in (
+            vppctl.show_perfmon_statistics(include_threads=THREADS),
+            vppctl.show_dpdk_latency(),
+            vppctl.show_runtime(include_threads=THREADS),
+        ):
+            res = _merge_dict(res, _as_serializable(data))
         return res
 
     def stat_total():
         return perf.stat_cache(DURATION, _find_process(THREADS))
 
+    # Options for 'record_func'
     record_database = SQLAlchemyExperimentRecorder(RECORD_URL_TEMPLATE, RECORD_TABLE_TEMPLATE, verbose=VERBOSE)
     record_jsonl = JSONLExperimentRecorder(verbose=VERBOSE)
 
-    run_experiment(
-        node_batch_combinations,
-        apply_func=apply_vpp_node_batch,
-        stat_func=stat_vpp_nodes,
-        # stat_func=stat_total,
-        record_func=record_database,
-        # record_func=record_jsonl,
-        duration=DURATION,
-        repeat_count=REPEAT_COUNT,
-    )
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--settings', type=locals().__getitem__, default=node_batch_combinations)
+    parser.add_argument('--apply-func', type=locals().__getitem__, default=apply_vpp_node_batch)
+    parser.add_argument('--stat-func', type=locals().__getitem__, default=stat_vpp_nodes)
+    parser.add_argument('--record-func', type=locals().__getitem__, default=record_database)
+    parser.add_argument('--duration', type=float, default=DURATION)
+    parser.add_argument('--repeat-count', type=int, default=REPEAT_COUNT)
+    parser.add_argument('--repeat-interval', type=float, default=REPEAT_INTERVAL)
+    kwargs = vars(parser.parse_args())
+
+    run_experiment(**kwargs)
+
+
+if __name__ == '__main__':
+    sys.exit(main())
