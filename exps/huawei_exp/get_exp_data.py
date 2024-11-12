@@ -8,6 +8,7 @@ import sys
 import time
 from dataclasses import dataclass, field, fields
 from datetime import datetime
+from functools import reduce
 from itertools import product
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple, Union
 
@@ -710,13 +711,16 @@ def _merge_dict(dest: Dict[Any, Any], src: Dict[Any, Any]) -> Dict[Any, Any]:
     return dest
 
 
-BATCH_NODES = ['ip4-lookup', 'ip6-input', 'nat-pre-in2out', 'ip4-inacl']
-BATCH_SIZES = [32, 64, 96, 128, 160, 192, 224, 256]
+BATCH_NODES_IP4 = ['ip4-lookup', 'nat-pre-in2out', 'ip4-inacl']
+BATCH_NODES_IP6 = ['ip6-input']
+BATCH_NODES_ETH1 = ['Ethernet1-output']
+BATCH_NODES = [*BATCH_NODES_IP4, *BATCH_NODES_IP6, *BATCH_NODES_ETH1]
+BATCH_SIZES = [32, 48, 64, 128, 256]
 BATCH_TIMEOUTS = [100]
 
 DPDK_RX_INTERFACE = 'Ethernet0'
 DPDK_BATCH_SIZES = BATCH_SIZES.copy()
-DPDK_BATCH_TIMEOUTS = BATCH_TIMEOUTS.copy()
+DPDK_BATCH_TIMEOUTS = [t / 1_000_000 for t in BATCH_TIMEOUTS]
 
 DURATION = 10
 REPEAT_COUNT = 3
@@ -737,8 +741,38 @@ def main():
     node_batch_configs = generate_batch_configs(BATCH_NODES, BATCH_SIZES, BATCH_TIMEOUTS)
     node_batch_combinations = generate_batch_config_combinations(BATCH_NODES, BATCH_SIZES, BATCH_TIMEOUTS)
     dpdk_batch_configs = generate_dpdk_batch_configs(DPDK_RX_INTERFACE, DPDK_BATCH_SIZES, DPDK_BATCH_TIMEOUTS)
-    node_and_dpdk_batch_configs = map(lambda x: _merge_dict(x[0], x[1]), map(_as_serializable, zip(node_batch_configs, dpdk_batch_configs)))
-    node_and_dpdk_batch_combinations = map(lambda x: _merge_dict(x[0], x[1]), map(_as_serializable, product(node_batch_combinations, dpdk_batch_configs)))
+    node_and_dpdk_batch_configs = map(
+        lambda x: _merge_dict(x[0], x[1]),
+        map(
+            _as_serializable,
+            zip(
+                generate_batch_configs(BATCH_NODES, BATCH_SIZES, BATCH_TIMEOUTS),
+                generate_dpdk_batch_configs(DPDK_RX_INTERFACE, DPDK_BATCH_SIZES, DPDK_BATCH_TIMEOUTS),
+            ),
+        ),
+    )
+    node_and_dpdk_batch_combinations = map(
+        lambda x: _merge_dict(x[0], x[1]),
+        map(
+            _as_serializable,
+            product(
+                generate_batch_config_combinations(BATCH_NODES, BATCH_SIZES, BATCH_TIMEOUTS),
+                generate_dpdk_batch_configs(DPDK_RX_INTERFACE, DPDK_BATCH_SIZES, DPDK_BATCH_TIMEOUTS),
+            ),
+        ),
+    )
+    node_and_dpdk_grouped_batch_combinations = map(
+        lambda x: reduce(lambda a, b: _merge_dict(a, b), x, {}),
+        map(
+            _as_serializable,
+            product(
+                generate_batch_configs(BATCH_NODES_IP4, BATCH_SIZES, BATCH_TIMEOUTS),
+                generate_batch_configs(BATCH_NODES_IP6, BATCH_SIZES, BATCH_TIMEOUTS),
+                generate_batch_configs(BATCH_NODES_ETH1, BATCH_SIZES, BATCH_TIMEOUTS),
+                generate_dpdk_batch_configs(DPDK_RX_INTERFACE, DPDK_BATCH_SIZES, DPDK_BATCH_TIMEOUTS),
+            ),
+        ),
+    )
 
     # Options for 'apply_func'
     def apply_vpp_node_batch(setting):
@@ -773,7 +807,7 @@ def main():
     record_jsonl = JSONLExperimentRecorder(verbose=VERBOSE)
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--settings', type=locals().__getitem__, default=node_batch_combinations)
+    parser.add_argument('--settings', type=locals().__getitem__, default=node_batch_configs)
     parser.add_argument('--apply-func', type=locals().__getitem__, default=apply_vpp_node_batch)
     parser.add_argument('--stat-func', type=locals().__getitem__, default=stat_vpp_nodes)
     parser.add_argument('--record-func', type=locals().__getitem__, default=record_database)
