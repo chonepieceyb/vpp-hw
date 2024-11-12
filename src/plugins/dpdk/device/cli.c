@@ -383,7 +383,8 @@ reset_packets_latency_fn (vlib_main_t * vm,
 {
   dpdk_main_t *dm = &dpdk_main;
   dpdk_device_t *xd = dm->devices;
-  u64 now = clib_cpu_time_now();
+  f64 now = vlib_time_now(vm);
+
   vec_foreach (xd, dm->devices)
   {
     // reset total latency
@@ -427,7 +428,7 @@ show_packets_latency_fn (vlib_main_t * vm,
 {
   dpdk_main_t *dm = &dpdk_main;
   dpdk_device_t *xd = dm->devices;
-  f64 now = vlib_time_now (vm);
+  f64 now = vlib_time_now(vm);
   f64 last_timestamp = xd->last_timestamp;
   f64 time_diff_s = now - last_timestamp;
 
@@ -484,7 +485,7 @@ show_packets_latency_and_reset_fn (vlib_main_t * vm,
 {
   dpdk_main_t *dm = &dpdk_main;
   dpdk_device_t *xd = dm->devices;
-  f64 now = vlib_time_now (vm);
+  f64 now = vlib_time_now(vm);
   f64 last_timestamp = xd->last_timestamp;
   f64 time_diff_s = now - last_timestamp;
   xd->last_timestamp = now;
