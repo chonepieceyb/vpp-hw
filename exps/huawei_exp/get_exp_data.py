@@ -8,6 +8,7 @@ import sys
 import time
 from dataclasses import dataclass, field, fields
 from datetime import datetime
+from itertools import product
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple, Union
 
 from sqlalchemy import DDL, Boolean, Column, DateTime, Float, Identity, Integer, MetaData, String, Table, create_engine, func, insert, text
@@ -733,9 +734,11 @@ perf = Perf(['sudo', 'perf'], verbose=VERBOSE)
 
 def main():
     # Options for 'settings'
-    node_batch_combinations = generate_batch_config_combinations(BATCH_NODES, BATCH_SIZES, BATCH_TIMEOUTS)
     node_batch_configs = generate_batch_configs(BATCH_NODES, BATCH_SIZES, BATCH_TIMEOUTS)
+    node_batch_combinations = generate_batch_config_combinations(BATCH_NODES, BATCH_SIZES, BATCH_TIMEOUTS)
     dpdk_batch_configs = generate_dpdk_batch_configs(DPDK_RX_INTERFACE, DPDK_BATCH_SIZES, DPDK_BATCH_TIMEOUTS)
+    node_and_dpdk_batch_configs = map(lambda x: _merge_dict(x[0], x[1]), map(_as_serializable, zip(node_batch_configs, dpdk_batch_configs)))
+    node_and_dpdk_batch_combinations = map(lambda x: _merge_dict(x[0], x[1]), map(_as_serializable, product(node_batch_combinations, dpdk_batch_configs)))
 
     # Options for 'apply_func'
     def apply_vpp_node_batch(setting):
@@ -744,6 +747,11 @@ def main():
 
     def apply_dpdk_batch(setting):
         vppctl.set_dpdk_batchsize(setting)
+        _reset_all_stats()
+
+    def apply_vpp_and_dpdk_batch(setting):
+        vppctl.set_node_batch(setting['nodes'])
+        vppctl.set_dpdk_batchsize(setting['interfaces'])
         _reset_all_stats()
 
     # Options for 'stat_func'
