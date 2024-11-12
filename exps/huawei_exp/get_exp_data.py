@@ -75,7 +75,16 @@ class CommandLineTool:
         try:
             if self._verbose:
                 print('+ ' + shlex.join(command), file=sys.stderr)
-            return subprocess.run(command, **kwargs)
+            process = subprocess.run(command, **kwargs)
+            if self._verbose:
+                for prefix, output in zip(('E ', '* '), map(self._try_decode, (process.stderr, process.stdout))):
+                    if not output:
+                        continue
+                    if isinstance(output, str):
+                        print('\n'.join(prefix + line for line in output.splitlines()), file=sys.stderr)
+                    else:
+                        print(f'{prefix} <binary>', file=sys.stderr)
+            return process
         except subprocess.CalledProcessError as e:
             raise self.InvocationError(e) from e
 
@@ -180,7 +189,7 @@ class VPPCtl(CommandLineTool):
         if not isinstance(value, self.DPDKInterfaceBatchConfig):
             value = self.DPDKInterfaceBatchConfig(**value)
         self._invoke(
-            ['set', 'dpdk', 'batchsize', interface, str(value.size), 'timeout', str(value.timeout)],
+            ['set', 'dpdk', 'batchsize', interface, 'batchsize', str(value.size), 'timeout', str(value.timeout)],
             **kwargs,
         )
 
