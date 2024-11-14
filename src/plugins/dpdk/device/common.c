@@ -61,9 +61,10 @@ tsc_field(struct rte_mbuf *mbuf, int offset)
 }
 
 /* Callback added to the RX port and applied to packets. 8< */
-static uint16_t add_timestamps(uint16_t port , uint16_t qidx __rte_unused,
-                               struct rte_mbuf **pkts, uint16_t nb_pkts,
-                               void *xd) {
+static uint16_t
+add_timestamps(uint16_t port __rte_unused, uint16_t qidx __rte_unused,
+		struct rte_mbuf **pkts, uint16_t nb_pkts,
+		uint16_t max_pkts __rte_unused, void *xd) {
   dpdk_device_t *__xd = (dpdk_device_t *)xd;
   // dpdk_device_t which has hw_if_index = 0 has not been initialized.
   if(unlikely(__xd->hw_if_index == 0)) {
@@ -300,7 +301,7 @@ retry:
 	dpdk_device_error (xd, "rte_eth_tx_queue_setup", rv);
 
       /* add latency calculate call back function */
-      rte_eth_add_tx_callback(xd->port_id, 0, add_timestamps, (void*)xd);
+      rte_eth_add_rx_callback(xd->port_id, 0, add_timestamps, (void*)xd);
       rte_eth_add_tx_callback(xd->port_id, 0, calc_latency, (void*)xd);
       clib_spinlock_init (&vec_elt (xd->tx_queues, j).lock);
   }
