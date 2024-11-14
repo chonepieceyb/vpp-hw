@@ -582,10 +582,11 @@ class Perf(CommandLineTool):
         if pids is not None:
             args += ['-p', ','.join(str(pid) for pid in pids)]
         args += command
-        output = self._invoke(args, **kwargs).stderr.decode()
+        process = self._invoke(args, **kwargs)
+        output = process.stderr.decode()
         if parse_func:
             # TODO: Support stderr
-            command_output = self._invoke(args, **kwargs).stdout.decode()
+            command_output = process.stdout.decode()
             parse_func(command_output)
         output = self._remove_control_chars(output)
         match = self._STAT_PATTERN.search(output)
