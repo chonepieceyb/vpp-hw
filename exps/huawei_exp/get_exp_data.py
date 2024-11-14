@@ -10,7 +10,7 @@ from dataclasses import dataclass, field, fields
 from datetime import datetime
 from functools import reduce
 from itertools import product
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple, Union, cast
 
 from sqlalchemy import DDL, Boolean, Column, DateTime, Float, Identity, Integer, MetaData, String, Table, create_engine, func, insert, text
 from sqlalchemy.sql.ddl import CreateColumn
@@ -416,6 +416,65 @@ class VPPCtl(CommandLineTool):
             threads_data[thread] = self.RuntimeThreadStat(vector_rates=vector_rates_data, nodes=nodes_data)
         return self.RuntimeStat(threads=threads_data)
 
+    @dataclass
+    class MonitorDirectionStat:
+        pps: int
+        bps: int
+
+    @dataclass
+    class MonitorInterfaceStat:
+        rx: 'VPPCtl.MonitorDirectionStat' = field(default_factory=lambda: VPPCtl.MonitorDirectionStat(0, 0))
+        tx: 'VPPCtl.MonitorDirectionStat' = field(default_factory=lambda: VPPCtl.MonitorDirectionStat(0, 0))
+
+    @dataclass
+    class MonitorStat:
+        interfaces: Dict[str, 'VPPCtl.MonitorInterfaceStat'] = field(default_factory=dict)
+
+    def monitor_interface(self, interface: str, interval: Optional[int] = None, **kwargs: Any) -> MonitorStat:
+        """
+        Call `vppctl monitor interface <interface> interval <interval> count 1`.
+
+        :param interface: Interface name
+        :param interval: Interval in seconds
+
+        :returns: Parsed output
+        """
+        args = ['monitor', 'interface', interface]
+        if interval is not None:
+            args += ['interval', str(interval)]
+        # TODO: Add support for count
+        args += ['count', '1']
+        output = self._invoke(args, **kwargs).stdout.decode()
+        return self._parse_monitor_stat(interface, output)
+
+    _MONITOR_STAT_LINE_PATTERN = re.compile(r'^rx: (.+)pps (.+)bps tx: (.+)pps (.+)bps$')
+    _MONITOR_STAT_UNITS = {'k': 1_000, 'm': 1_000_000, 'g': 1_000_000_000}
+
+    @classmethod
+    def _parse_monitor_stat(cls, interface: str, output: str) -> MonitorStat:
+        line, *_ = output.strip().split('\n')
+        # TODO: Add support for multiple lines
+        match = cls._MONITOR_STAT_LINE_PATTERN.fullmatch(line.strip())
+        if not match:
+            raise ValueError('No match found; this should not happen')
+        components = list(match.groups())
+        for i, component in enumerate(components):
+            if component[-1].lower() in cls._MONITOR_STAT_UNITS:
+                factor = cls._MONITOR_STAT_UNITS[component[-1].lower()]
+                component = component[:-1]
+            else:
+                factor = 1
+            components[i] = int(float(component) * factor)
+        rx_pps, rx_bps, tx_pps, tx_bps = cast(List[int], components)
+        return cls.MonitorStat(
+            interfaces={
+                interface: cls.MonitorInterfaceStat(
+                    rx=cls.MonitorDirectionStat(rx_pps, rx_bps),
+                    tx=cls.MonitorDirectionStat(tx_pps, tx_bps),
+                )
+            }
+        )
+
 
 def generate_dpdk_batch_configs(interface: str, sizes: Iterable[int], timeouts: Iterable[float]) -> Iterable[VPPCtl.DPDKBatchConfig]:
     """
@@ -500,13 +559,21 @@ class Perf(CommandLineTool):
         llc_stores: int
         l2_rqsts_all_demand_miss: int
 
-    # TODO: Generalize this
-    def stat_cache(self, duration: Union[int, str], pids: Optional[Iterable[int]], **kwargs: Any) -> CacheData:
+    # TODO: Revisit this design; generalize metrics
+    def stat_cache(
+        self,
+        command: Iterable[str],
+        pids: Optional[Iterable[int]] = None,
+        parse_func: Optional[Callable[[str], Any]] = None,
+        **kwargs: Any,
+    ) -> CacheData:
         """
         Call `perf stat` and return the parsed output.
 
-        :param duration: Duration of the measurement
+        :param command: Command to run
         :param pids: PIDs to measure; if `None`, measure all processes
+        :param parse_func: Function to parse the output (for processing output of the command being run)
+        :param kwargs: Keyword arguments to pass to `invoke`
 
         :returns: Parsed output
         """
@@ -514,8 +581,12 @@ class Perf(CommandLineTool):
         args += ['-e', 'L1-dcache-loads,L1-dcache-load-misses,L1-dcache-store,icache.hit,icache.misses,icache.ifdata_stall,LLC-loads,LLC-load-misses,LLC-stores,L2_RQSTS.ALL_DEMAND_MISS']
         if pids is not None:
             args += ['-p', ','.join(str(pid) for pid in pids)]
-        args += ['sleep', str(duration)]
+        args += command
         output = self._invoke(args, **kwargs).stderr.decode()
+        if parse_func:
+            # TODO: Support stderr
+            command_output = self._invoke(args, **kwargs).stdout.decode()
+            parse_func(command_output)
         output = self._remove_control_chars(output)
         match = self._STAT_PATTERN.search(output)
         if not match:
@@ -529,6 +600,17 @@ class Perf(CommandLineTool):
             value = int(value.replace(',', ''))
             data[name] = value
         return self.CacheData(**data)
+
+    def stat_cache_with_duration(self, duration: Union[int, str], pids: Optional[Iterable[int]] = None, **kwargs: Any) -> CacheData:
+        """
+        Call `perf stat` and return the parsed output.
+
+        :param duration: Duration of the measurement
+        :param pids: PIDs to measure; if `None`, measure all processes
+
+        :returns: Parsed output
+        """
+        return self.stat_cache(['sleep', str(duration)], pids=pids, **kwargs)
 
 
 def _as_serializable(data: Any):
@@ -694,7 +776,8 @@ def _reset_all_stats():
     vppctl.perfmon_reset()
     vppctl.clear_runtime()
     vppctl.dpdk_latency_reset()
-    vppctl.perfmon_start('cache-detail')
+    # TODO: Revisit this
+    # vppctl.perfmon_start('cache-detail')
 
 
 def _find_process(include_comm: Iterable[str], raise_on_not_found: bool = True) -> List[int]:
@@ -723,16 +806,19 @@ def _merge_dict(dest: Dict[Any, Any], src: Dict[Any, Any]) -> Dict[Any, Any]:
 BATCH_NODES_IP4 = ['ip4-lookup', 'nat-pre-in2out', 'ip4-inacl']
 BATCH_NODES_IP6 = ['ip6-input']
 BATCH_NODES_ETH1 = ['Ethernet1-output']
-BATCH_NODES = [*BATCH_NODES_IP4, *BATCH_NODES_IP6, *BATCH_NODES_ETH1]
-BATCH_SIZES = [32, 48, 64, 128, 256]
+# BATCH_NODES = [*BATCH_NODES_IP4, *BATCH_NODES_IP6, *BATCH_NODES_ETH1]
+BATCH_NODES = ['nat44-ed-in2out', 'nat44-ed-in2out-slowpath', 'Ethernet1-output']
+# BATCH_SIZES = [32, 48, 64, 128, 256]
+BATCH_SIZES = [32, 48, 64, 128]
 BATCH_TIMEOUTS = [100]
 
 DPDK_RX_INTERFACE = 'Ethernet0'
+DPDK_TX_INTERFACE = 'Ethernet1'
 DPDK_BATCH_SIZES = BATCH_SIZES.copy()
 DPDK_BATCH_TIMEOUTS = [t / 1_000_000 for t in BATCH_TIMEOUTS]
 
 DURATION = 10
-REPEAT_COUNT = 3
+REPEAT_COUNT = 1
 REPEAT_INTERVAL = 0
 THREADS = ['vpp_wk_0']
 
@@ -809,7 +895,20 @@ def main():
         return res
 
     def stat_total():
-        return perf.stat_cache(DURATION, _find_process(THREADS))
+        return perf.stat_cache_with_duration(DURATION, _find_process(THREADS))
+
+    def stat_total_with_monitor():
+        command = [*vppctl.command, 'monitor', 'interface', DPDK_TX_INTERFACE, 'interval', str(DURATION), 'count', '1']
+        throughputs_data = []
+        cache_data = perf.stat_cache(
+            command,
+            _find_process(THREADS),
+            parse_func=lambda output: throughputs_data.append(VPPCtl._parse_monitor_stat(DPDK_TX_INTERFACE, output)),  # FIXME:
+        )
+        res = {}
+        for data in (throughputs_data[0], cache_data):
+            res = _merge_dict(res, _as_serializable(data))
+        return res
 
     # Options for 'record_func'
     record_database = SQLAlchemyExperimentRecorder(RECORD_URL_TEMPLATE, RECORD_TABLE_TEMPLATE, verbose=VERBOSE)
