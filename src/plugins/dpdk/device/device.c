@@ -180,6 +180,8 @@ tx_burst_vector_internal (vlib_main_t *vm, dpdk_device_t *xd,
       mb += n_sent;
     }
   while (n_sent && n_left && (n_retry > 0));
+// TODO: dpdk tx error fix 
+//   while (n_left!=0);
 
   return n_left;
 }

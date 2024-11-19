@@ -59,6 +59,9 @@ typedef uint16_t dpdk_portid_t;
 // Timeout packet count thresholder
 #define TIME_OUT_THRESHOULDER_NS 10000
 
+// maxmium number of protocol latency trace count
+#define MAX_LATENCY_TRACE_COUNT 20
+
 /* timestamp field type */
 typedef uint64_t tsc_t;
 
@@ -224,8 +227,14 @@ typedef struct
   u64 cycle_per_ns;  /* convert CPU cycles to time (ns) */
   u64 cycle_per_us;  /* convert CPU cycles to time (us) */
   u64 cycle_per_ms;  /* convert CPU cycles to time (ms) */
+  u64 cycle_per_s;  /* convert CPU cycles to time (s) */
+
   /* latency calculation used temp store */
-  struct dpdk_lat_t lat_stats;
+  struct dpdk_lat_t lat_stats[MAX_LATENCY_TRACE_COUNT];
+  struct dpdk_lat_t total_lat_stats;
+
+  /* last timestamp used in avg throughput calculation */
+  f64 last_timestamp;
 
   /* mac address */
   u8 *default_mac_address;
@@ -240,6 +249,9 @@ typedef struct
   /* error string */
   clib_error_t *errors;
   dpdk_port_conf_t conf;
+
+  volatile u32 batch_size;
+  volatile f64 timeout_sec;
 } dpdk_device_t;
 
 #define DPDK_STATS_POLL_INTERVAL      (10.0)
@@ -324,6 +336,7 @@ typedef struct
   u64 cycle_per_ns;  /* convert CPU cycles to time (ns) */
   u64 cycle_per_us;  /* convert CPU cycles to time (us) */
   u64 cycle_per_ms;  /* convert CPU cycles to time (ms) */
+  u64 cycle_per_s;  /* convert CPU cycles to time (s) */
 
 } dpdk_config_main_t;
 

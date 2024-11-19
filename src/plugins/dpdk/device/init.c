@@ -305,6 +305,8 @@ dpdk_lib_init (dpdk_main_t * dm)
       dm->conf->cycle_per_ns = cycle_per_second / 1000000000;
       dm->conf->cycle_per_us = cycle_per_second / 1000000;
       dm->conf->cycle_per_ms = cycle_per_second / 1000;
+      dm->conf->cycle_per_s = cycle_per_second;
+
       dpdk_log_info("cycle_per_ns: %u, cycle_per_second: %lu", dm->conf->cycle_per_ns, cycle_per_second);
 
       devconf = dpdk_find_startup_config (&di);
@@ -321,6 +323,9 @@ dpdk_lib_init (dpdk_main_t * dm)
       xd->port_id = port_id;
       xd->device_index = xd - dm->devices;
       xd->per_interface_next_index = ~0;
+      
+      /*default xd batch size*/
+      xd->batch_size = DPDK_RX_BURST_SZ;
 
       clib_memcpy (&xd->conf, &dm->default_port_conf,
 		   sizeof (dpdk_port_conf_t));
