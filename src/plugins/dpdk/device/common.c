@@ -18,6 +18,7 @@
 #include <vppinfra/format.h>
 #include <vppinfra/file.h>
 #include <vlib/unix/unix.h>
+#include <vlib/main.h>
 #include <assert.h>
 
 #include <vnet/ip/ip.h>
@@ -28,6 +29,9 @@
 #include <dpdk/device/dpdk.h>
 #include <dpdk/device/dpdk_priv.h>
 #include <vppinfra/error.h>
+
+// load timestamp offset from ./init.c
+extern int tsc_dynfield_offset;
 
 /* DPDK TX offload to vnet hw interface caps mapppings */
 static struct
@@ -53,11 +57,11 @@ dpdk_device_error (dpdk_device_t * xd, char *str, int rv)
 				  str, xd->port_id, rv, rte_strerror (rv));
 }
 
-static inline rte_mbuf_timestamp_t *
+static inline uint64_t *
 tsc_field(struct rte_mbuf *mbuf, int offset)
 {
 	return RTE_MBUF_DYNFIELD(mbuf,
-			offset, rte_mbuf_timestamp_t *);
+			offset, uint64_t *);
 }
 
 /* Callback added to the RX port and applied to packets. 8< */
@@ -66,15 +70,13 @@ add_timestamps(uint16_t port __rte_unused, uint16_t qidx __rte_unused,
 		struct rte_mbuf **pkts, uint16_t nb_pkts,
 		uint16_t max_pkts __rte_unused, void *xd) {
   dpdk_device_t *__xd = (dpdk_device_t *)xd;
-  // dpdk_device_t which has hw_if_index = 0 has not been initialized.
-  if(unlikely(__xd->hw_if_index == 0)) {
-    return nb_pkts;
-  }
   unsigned i;
-  uint64_t now = rte_rdtsc();
-  dpdk_log_debug("tsc_dynfield_offset: %d used at add_timestamps, nic: %d", __xd->tsc_dynfield_offset, __xd->hw_if_index);
+  // get nano second now timestamp
+  uint64_t now = (uint64_t) (vlib_time_now(vlib_get_main()) * 1e9);
   for (i = 0; i < nb_pkts; i++) {
-    *tsc_field(pkts[i], __xd->tsc_dynfield_offset) = now;
+    dpdk_log_debug("before: %lu, offset: %d, nic: %d", *tsc_field(pkts[i], tsc_dynfield_offset), tsc_dynfield_offset, __xd->hw_if_index);
+    *tsc_field(pkts[i], tsc_dynfield_offset) = now;
+    dpdk_log_debug("after: %lu, offset: %d", *tsc_field(pkts[i], tsc_dynfield_offset), tsc_dynfield_offset);
   }
   return nb_pkts;
 }
@@ -85,20 +87,14 @@ static uint16_t calc_latency(uint16_t port, uint16_t qidx __rte_unused,
                              struct rte_mbuf **pkts, uint16_t nb_pkts,
                              void *xd) {
   dpdk_device_t *__xd = (dpdk_device_t *)xd;
-  // dpdk_device_t which has hw_if_index = 0 has not been initialized.
-  if(unlikely(__xd->hw_if_index == 0)) {
-    return nb_pkts;
-  }
-  uint64_t accumulated_latency[MAX_LATENCY_TRACE_COUNT] = {0};
-  uint64_t now = rte_rdtsc();
+  // get nano second now timestamp
+  uint64_t now = (uint64_t) (vlib_time_now(vlib_get_main()) * 1e9);
   struct dpdk_lat_t *lat_stats = __xd->lat_stats;
-  uint64_t total_lat = 0;
   unsigned i;
-
   for (i = 0; i < nb_pkts; i++) {
-    uint64_t packet_ts = *tsc_field(pkts[i], __xd->tsc_dynfield_offset);
+    uint64_t packet_ts = *tsc_field(pkts[i], tsc_dynfield_offset);
     uint64_t packet_latency = now - packet_ts;
-
+    dpdk_log_debug("now: %lu, packet_ts: %lu, packet_latency: %lu, offset: %d, nic: %d", now, packet_ts, packet_latency, tsc_dynfield_offset, __xd->hw_if_index);
     vlib_buffer_t *pkt_vlib_buf = vlib_buffer_from_rte_mbuf(pkts[i]);
     u64 protocal_identifier = ((vnet_buffer_opaque2_t *) (pkt_vlib_buf)->opaque2)->protocal_identifier;
 
@@ -113,25 +109,17 @@ static uint16_t calc_latency(uint16_t port, uint16_t qidx __rte_unused,
       lat_stats[protocal_identifier].timeout_pkts++;
     }
 
-    accumulated_latency[protocal_identifier] += packet_latency;
-    total_lat += packet_latency;
+    // Update the latency statistics, actually total_latency store the latency time(ns)
     __xd->lat_stats[protocal_identifier].total_pkts++;
+    __xd->lat_stats[protocal_identifier].total_latency += packet_latency;
+    __xd->total_lat_stats.total_latency += packet_latency;
   }
   __xd->total_lat_stats.total_pkts += nb_pkts;
-
-  /* actually total_latency store the latency time(ns) */
-  for (i = 0; i < MAX_LATENCY_TRACE_COUNT; i++) {
-    __xd->lat_stats[i].total_latency +=
-        accumulated_latency[i] / __xd->cycle_per_ns;
-  }
-  __xd->total_lat_stats.total_latency += total_lat / __xd->cycle_per_ns;
-
   return nb_pkts;
 }
 /* >8 End of callback addition. */
 
 void dpdk_device_setup(dpdk_device_t *xd) {
-  dpdk_main_t *dm = &dpdk_main;
   vlib_main_t *vm = vlib_get_main ();
   vnet_main_t *vnm = vnet_get_main ();
   vnet_sw_interface_t *sw = vnet_get_sw_interface (vnm, xd->sw_if_index);
@@ -256,13 +244,7 @@ void dpdk_device_setup(dpdk_device_t *xd) {
   conf.rxmode.mtu = max_frame_size - xd->driver_frame_overhead;
 #endif
 
-  /*configuration timestamps, check in dpdk_lib_init*/
-  xd->tsc_dynfield_offset = dm->conf->tsc_dynfield_offset;
-  dpdk_log_debug("tsc_dynfield_offset: %d copyed at dpdk_device_setup, nic: %d", xd->tsc_dynfield_offset, xd->hw_if_index);
-  xd->cycle_per_ns = dm->conf->cycle_per_ns;
-  xd->cycle_per_us = dm->conf->cycle_per_us;
-  xd->cycle_per_ms = dm->conf->cycle_per_ms;
-  xd->cycle_per_s = dm->conf->cycle_per_s;
+  // init startup timestamp
   xd->last_timestamp = vlib_time_now(vm);
 
 retry:
@@ -300,7 +282,7 @@ retry:
     if (rv < 0)
 	dpdk_device_error (xd, "rte_eth_tx_queue_setup", rv);
 
-      /* add latency calculate call back function */
+      // add latency calculate call back function
       rte_eth_add_rx_callback(xd->port_id, 0, add_timestamps, (void*)xd);
       rte_eth_add_tx_callback(xd->port_id, 0, calc_latency, (void*)xd);
       clib_spinlock_init (&vec_elt (xd->tx_queues, j).lock);
