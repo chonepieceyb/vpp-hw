@@ -66,6 +66,7 @@ struct dpdk_lat_t {
   uint64_t total_latency; /* Total latency of all packets between in and out vpp */
   uint64_t total_pkts; /* Total packets between in and out vpp */
   uint64_t timeout_pkts; /* latency greater than TIME_OUT_THRESHOULDER_NS packets count */
+  uint64_t total_bytes; /* Total throughput in bytes */
 };
 
 #define foreach_dpdk_device_flags                                             \

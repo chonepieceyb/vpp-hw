@@ -146,6 +146,58 @@ dpdk_validate_rte_mbuf (vlib_main_t * vm, vlib_buffer_t * b,
     }
 }
 
+// load timestamp offset from ./init.c
+extern int tsc_dynfield_offset;
+
+static_always_inline rte_mbuf_timestamp_t *
+tsc_field (struct rte_mbuf *mbuf, int offset)
+{
+	return RTE_MBUF_DYNFIELD(mbuf,
+			offset, rte_mbuf_timestamp_t *);
+}
+
+/* Callback is added to the TX port. 8< */
+static uint16_t calc_latency (vlib_main_t *vm, struct rte_mbuf **pkts,
+                               uint16_t nb_pkts, dpdk_device_t *xd) {
+  // get nano second now timestamp
+  uint64_t now = (uint64_t) (vlib_time_now(vlib_get_main()) * 1e9);
+  struct dpdk_lat_t *lat_stats = xd->lat_stats;
+  unsigned i;
+  for (i = 0; i < nb_pkts; i++) {
+    uint64_t packet_ts = *tsc_field(pkts[i], tsc_dynfield_offset);
+    uint64_t packet_latency = now - packet_ts;
+    dpdk_log_debug("now: %lu, packet_ts: %lu, packet_latency: %lu, offset: %d, nic: %d", now, packet_ts, packet_latency, tsc_dynfield_offset, xd->hw_if_index);
+    vlib_buffer_t *pkt_vlib_buf = vlib_buffer_from_rte_mbuf(pkts[i]);
+
+    // get packet length in byte
+    uint64_t packet_length = vlib_buffer_length_in_chain(vm, pkt_vlib_buf);
+
+    // get protocal_identifier from packet opaque2 field which is set in the ip4-input and ip6-input node
+    uint64_t protocal_identifier = ((vnet_buffer_opaque2_t *) (pkt_vlib_buf)->opaque2)->protocal_identifier;
+
+    // If the protocal_identifier is greater than MAX_LATENCY_TRACE_COUNT, it is considered as invalid.
+    if (unlikely(protocal_identifier >= MAX_LATENCY_TRACE_COUNT)) {
+        dpdk_log_err("protocal_identifier: %d is greater than MAX_LATENCY_TRACE_COUNT", protocal_identifier);
+        continue;
+    }
+
+    // If the packet_latency is greater than the TIME_OUT_THRESHOULDER_NS, it is considered as timeout.
+    if (packet_latency > TIME_OUT_THRESHOULDER_NS) {
+      lat_stats[protocal_identifier].timeout_pkts++;
+    }
+
+    // Update the latency statistics, actually total_latency store the latency time(ns)
+    xd->lat_stats[protocal_identifier].total_pkts++;
+    xd->lat_stats[protocal_identifier].total_latency += packet_latency;
+    xd->lat_stats[protocal_identifier].total_bytes += packet_length;
+    xd->total_lat_stats.total_latency += packet_latency;
+    xd->total_lat_stats.total_bytes += packet_length;
+  }
+  xd->total_lat_stats.total_pkts += nb_pkts;
+  return nb_pkts;
+}
+/* >8 End of callback addition. */
+
 /*
  * This function calls the dpdk's tx_burst function to transmit the packets.
  * It manages a lock per-device if the device does not
@@ -171,6 +223,9 @@ tx_burst_vector_internal (vlib_main_t *vm, dpdk_device_t *xd,
 
       /* no wrap, transmit in one burst */
       n_sent = rte_eth_tx_burst (xd->port_id, queue_id, mb, n_left);
+
+      // Subsitute the original tx function call with the following line, to bypass tx IO
+      calc_latency(vm, mb, n_left, xd);
 
       if (is_shared)
 	clib_spinlock_unlock (&txq->lock);
