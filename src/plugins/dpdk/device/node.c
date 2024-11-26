@@ -12,7 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "vppinfra/time.h"
+
 #include <vnet/vnet.h>
 #include <vppinfra/vec.h>
 #include <vppinfra/error.h>
@@ -378,7 +378,6 @@ dpdk_device_input (vlib_main_t * vm, dpdk_main_t * dm, dpdk_device_t * xd,
   u32 or_flags;
   u32 n;
   u32 batch_size;
-  f64 timeouts, start;
   int single_next = 0;
 
   dpdk_per_thread_data_t *ptd = vec_elt_at_index (dm->per_thread_data,
@@ -401,23 +400,28 @@ dpdk_device_input (vlib_main_t * vm, dpdk_main_t * dm, dpdk_device_t * xd,
 //       if (n < n_to_rx)
 // 	break;
 //     }
+//   f64 timeouts, start;
+//   batch_size = xd->batch_size;
+//   timeouts = xd->timeout_sec;
+//   start = clib_time_now (&vm->clib_time);
+//   while (n_rx_packets < batch_size)
+//     {
+//       u32 n_to_rx = clib_min (batch_size - n_rx_packets, 32);
+
+//       n = rte_eth_rx_burst (xd->port_id, queue_id, ptd->mbufs + n_rx_packets,
+// 			    n_to_rx);
+//       n_rx_packets += n;
+
+//       if (n < n_to_rx) {
+// 	if (clib_time_now (&vm->clib_time) - start >= timeouts) {
+// 		break;
+// 	}
+//       }
+//     }
+//   if (n_rx_packets == 0)
+//     return 0;
   batch_size = xd->batch_size;
-  timeouts = xd->timeout_sec;
-  start = clib_time_now (&vm->clib_time);
-  while (n_rx_packets < batch_size)
-    {
-      u32 n_to_rx = clib_min (batch_size - n_rx_packets, 32);
-
-      n = rte_eth_rx_burst (xd->port_id, queue_id, ptd->mbufs + n_rx_packets,
-			    n_to_rx);
-      n_rx_packets += n;
-
-      if (n < n_to_rx) {
-	if (clib_time_now (&vm->clib_time) - start >= timeouts) {
-		break;
-	}
-      }
-    }
+  n_rx_packets = fetch_pkts_in_memory((struct rte_mbuf **)&(ptd->mbufs), &(ptd->pkt_wo_io_idx), batch_size);
   if (n_rx_packets == 0)
     return 0;
 

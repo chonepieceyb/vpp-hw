@@ -15,13 +15,12 @@
 
 #include <unistd.h>
 #include <errno.h>
-
 #include <rte_config.h>
-#include <rte_mbuf.h>
 #include <rte_ethdev.h>
 #include <rte_cryptodev.h>
 #include <rte_vfio.h>
 #include <rte_version.h>
+#include <rte_mbuf.h>
 
 #include <vlib/vlib.h>
 #include <dpdk/buffer.h>
@@ -34,6 +33,8 @@ extern struct rte_mbuf *dpdk_mbuf_template_by_pool_index;
 struct rte_mempool **dpdk_mempool_by_buffer_pool_index = 0;
 struct rte_mempool **dpdk_no_cache_mempool_by_buffer_pool_index = 0;
 struct rte_mbuf *dpdk_mbuf_template_by_pool_index = 0;
+
+static struct rte_mbuf **pkts_wo_io;
 
 clib_error_t *
 dpdk_buffer_pool_init (vlib_main_t * vm, vlib_buffer_pool_t * bp)
@@ -438,6 +439,8 @@ dpdk_ops_vpp_get_count_no_cache (const struct rte_mempool *mp)
   return dpdk_ops_vpp_get_count (cmp);
 }
 
+static 
+
 clib_error_t *
 dpdk_buffer_pools_create (vlib_main_t * vm)
 {
@@ -470,6 +473,21 @@ dpdk_buffer_pools_create (vlib_main_t * vm)
 
 VLIB_BUFFER_SET_EXT_HDR_SIZE (sizeof (struct rte_mempool_objhdr) +
 			      sizeof (struct rte_mbuf));
+
+u32 fetch_pkts_in_memory(void *pkts, u32 *start, u32 num) 
+{
+  struct rte_mbuf **__pkts = (struct rte_mbuf**)(pkts);
+	if (num > vec_len(pkts_wo_io)) 
+	return 0;
+  u32 to = 0;
+  while (to < num) 
+    {
+        __pkts[to++] = pkts_wo_io[(*start)++];
+	if (*start == vec_len(pkts_wo_io))
+	  *start = 0;
+    }
+  return num;
+}
 
 #endif
 
