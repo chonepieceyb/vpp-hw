@@ -26,6 +26,8 @@ clib_error_t *dpdk_buffer_pools_create (vlib_main_t * vm);
 
 u32 fetch_pkts_in_memory(void *pkts, u32 *start, u32 num);
 
+clib_error_t *dpdk_create_pcap(void);
+
 #endif /* include_dpdk_buffer_h */
 
 /** @endcond */

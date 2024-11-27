@@ -337,8 +337,8 @@ typedef struct
   u16 next[DPDK_RX_BURST_SZ];
   u16 etype[DPDK_RX_BURST_SZ];
   u32 flags[DPDK_RX_BURST_SZ];
-  vlib_buffer_t buffer_template;
   u32 pkt_wo_io_idx;
+  vlib_buffer_t buffer_template;
 } dpdk_per_thread_data_t;
 
 typedef struct

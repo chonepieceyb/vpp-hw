@@ -35,6 +35,209 @@ struct rte_mempool **dpdk_no_cache_mempool_by_buffer_pool_index = 0;
 struct rte_mbuf *dpdk_mbuf_template_by_pool_index = 0;
 
 static struct rte_mbuf **pkts_wo_io;
+static struct rte_mempool *pcap_mp = NULL;
+static const char *PCAP_PATH = "/mnt/disk1/yangbin/CODING/WorkSpace/vpp/"
+			       "vpp-hw/exps/huawei_exp/pkts_wo_io.pcap";
+
+#define _PCAP_MAGIC_NUMBER  0xa1b2c3d4
+#define _PCAP_MAJOR_VERSION 2
+#define _PCAP_MINOR_VERSION 4
+
+typedef struct
+{
+  uint32_t magic_number;  /**< magic number */
+  uint16_t version_major; /**< major version number */
+  uint16_t version_minor; /**< minor version number */
+  int32_t thiszone;	  /**< GMT to local correction */
+  uint32_t sigfigs;	  /**< accuracy of timestamps */
+  uint32_t snaplen;	  /**< max length of captured packets, in octets */
+  uint32_t network;	  /**< data link type */
+} __pcap_hdr_t;
+
+typedef struct
+{
+  uint32_t ts_sec;   /**< timestamp seconds */
+  uint32_t ts_usec;  /**< timestamp microseconds */
+  uint32_t incl_len; /**< number of octets of packet saved in file */
+  uint32_t orig_len; /**< actual length of packet */
+} __pcap_record_hdr_t;
+
+typedef struct
+{
+  char *filename;	  /**< allocated string for filename of pcap */
+  FILE *fp;		  /**< file pointer for pcap file */
+  struct rte_mempool *mp; /**< Mempool for storing packets */
+  uint32_t
+    convert; /**< Endian flag value if 1 convert to host endian format */
+  uint32_t max_pkt_size; /**< largest packet found in pcap file */
+  uint32_t pkt_count;	 /**< Number of packets in pcap file */
+  uint32_t pkt_index;	 /**< Index of current packet in pcap file */
+  __pcap_hdr_t info;	 /**< information on the PCAP file */
+  int32_t pcap_result;	 /**< PCAP result of filter compile */
+} __pcap_info_t;
+
+static_always_inline void
+__pcap_convert (__pcap_info_t *pcap, __pcap_record_hdr_t *pHdr)
+{
+  if (pcap->convert)
+    {
+      pHdr->incl_len = ntohl (pHdr->incl_len);
+      pHdr->orig_len = ntohl (pHdr->orig_len);
+      pHdr->ts_sec = ntohl (pHdr->ts_sec);
+      pHdr->ts_usec = ntohl (pHdr->ts_usec);
+    }
+}
+
+static_always_inline void
+__pcap_rewind (__pcap_info_t *pcap)
+{
+  /* Rewind to the beginning */
+  rewind (pcap->fp);
+
+  /* Seek past the pcap header */
+  (void) fseek (pcap->fp, sizeof (__pcap_hdr_t), SEEK_SET);
+}
+
+static_always_inline void
+__mbuf_iterate_cb (struct rte_mempool *mp, void *opaque, void *obj,
+		   unsigned obj_idx __rte_unused)
+{
+  __pcap_info_t *pcap = (__pcap_info_t *) opaque;
+  struct rte_mbuf *m = (struct rte_mbuf *) obj;
+  __pcap_record_hdr_t hdr = { 0 };
+
+  /* TODO: Return clib_error_t * instead of calling rte_exit() */
+
+  if (fread (&hdr, 1, sizeof (__pcap_record_hdr_t), pcap->fp) != sizeof (hdr))
+    {
+      __pcap_rewind (pcap);
+      if (fread (&hdr, 1, sizeof (__pcap_record_hdr_t), pcap->fp) !=
+	  sizeof (hdr))
+	rte_exit (EXIT_FAILURE, "%s: failed to read pcap header\n", __func__);
+    }
+
+  /* Convert the packet header to the correct format. */
+  __pcap_convert (pcap, &hdr);
+
+  if (fread (rte_pktmbuf_mtod (m, char *) + sizeof (vlib_buffer_t), 1,
+	     hdr.incl_len, pcap->fp) == 0)
+    rte_exit (EXIT_FAILURE, "%s: failed to read packet data from PCAP file\n",
+	      __func__);
+
+  m->pool = mp;
+  m->next = NULL;
+  m->data_len = hdr.incl_len;
+  m->pkt_len = hdr.incl_len;
+  m->port = 0;
+  m->ol_flags = 0;
+
+  /* TODO: Set fields in `vlib_buffer_t` */
+}
+
+static_always_inline clib_error_t *
+__pcap_get_info (__pcap_info_t *pcap)
+{
+  __pcap_record_hdr_t hdr;
+
+  if (fread (&pcap->info, 1, sizeof (__pcap_hdr_t), pcap->fp) !=
+      sizeof (__pcap_hdr_t))
+    return clib_error_return (0, "%s: failed to read pcap header", __func__);
+
+  /* Make sure we have a valid PCAP file for Big or Little Endian formats. */
+  if (pcap->info.magic_number == _PCAP_MAGIC_NUMBER)
+    pcap->convert = 0;
+  else if (pcap->info.magic_number == ntohl (_PCAP_MAGIC_NUMBER))
+    pcap->convert = 1;
+  else
+    return clib_error_return (0, "%s: invalid magic number 0x%08x", __func__,
+			      pcap->info.magic_number);
+
+  if (pcap->convert)
+    {
+      pcap->info.magic_number = ntohl (pcap->info.magic_number);
+      pcap->info.version_major = ntohs (pcap->info.version_major);
+      pcap->info.version_minor = ntohs (pcap->info.version_minor);
+      pcap->info.thiszone = ntohl (pcap->info.thiszone);
+      pcap->info.sigfigs = ntohl (pcap->info.sigfigs);
+      pcap->info.snaplen = ntohl (pcap->info.snaplen);
+      pcap->info.network = ntohl (pcap->info.network);
+    }
+
+  pcap->max_pkt_size = 0;
+  /* count the number of packets and get the largest size packet */
+  for (;;)
+    {
+      if (fread (&hdr, 1, sizeof (__pcap_record_hdr_t), pcap->fp) !=
+	  sizeof (hdr))
+	break;
+
+      /* Convert the packet header to the correct format if needed */
+      __pcap_convert (pcap, &hdr);
+
+      if (fseek (pcap->fp, hdr.incl_len, SEEK_CUR) < 0)
+	break;
+
+      pcap->pkt_count++;
+      if (hdr.incl_len > pcap->max_pkt_size)
+	pcap->max_pkt_size = hdr.incl_len;
+    }
+  pcap->max_pkt_size += RTE_PKTMBUF_HEADROOM;
+  pcap->max_pkt_size =
+    RTE_ALIGN_CEIL (pcap->max_pkt_size, RTE_CACHE_LINE_SIZE);
+  printf ("PCAP: Max Packet Size: %d\n", pcap->max_pkt_size);
+
+  __pcap_rewind (pcap);
+
+  return 0;
+}
+
+clib_error_t *
+dpdk_create_pcap (void)
+{
+  clib_error_t *error = 0;
+  __pcap_info_t pcap = { 0 };
+  uint32_t pkt_count, elt_size;
+
+  pcap.filename = (char *) PCAP_PATH;
+
+  pcap.fp = fopen (pcap.filename, "r");
+  if (!pcap.fp)
+    return clib_error_return (0, "Failed to open file for (%s)",
+			      pcap.filename);
+
+  error = __pcap_get_info (&pcap);
+  if (error)
+    {
+      fclose (pcap.fp);
+      return error;
+    }
+
+  pkt_count = pcap.pkt_count;
+  if (pkt_count == 0)
+    {
+      fclose (pcap.fp);
+      return clib_error_return (0, "PCAP file is empty: %s", pcap.filename);
+    }
+
+  elt_size = sizeof (vlib_buffer_t) + pcap.max_pkt_size;
+
+  /* TODO: Revisit name, cache_size, priv_size, socket_id */
+  pcap_mp =
+    rte_pktmbuf_pool_create ("vpp-pkt-wo-io", pkt_count, 0, 0, elt_size, 0);
+  if (!pcap_mp)
+    {
+      fclose (pcap.fp);
+      return clib_error_return (0,
+				"Cannot create mbuf pool (vpp-pkt-wo-io) "
+				"nb_mbufs %d, socket_id 0: %s",
+				pkt_count, rte_strerror (rte_errno));
+    }
+  pcap.mp = pcap_mp;
+
+  rte_mempool_obj_iter (pcap_mp, __mbuf_iterate_cb, &pcap);
+
+  return 0;
+}
 
 clib_error_t *
 dpdk_buffer_pool_init (vlib_main_t * vm, vlib_buffer_pool_t * bp)
@@ -438,8 +641,6 @@ dpdk_ops_vpp_get_count_no_cache (const struct rte_mempool *mp)
   cmp = dpdk_no_cache_mempool_by_buffer_pool_index[mp->pool_id];
   return dpdk_ops_vpp_get_count (cmp);
 }
-
-static 
 
 clib_error_t *
 dpdk_buffer_pools_create (vlib_main_t * vm)
