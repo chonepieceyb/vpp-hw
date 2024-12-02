@@ -166,7 +166,7 @@ static uint16_t calc_latency (vlib_main_t *vm, struct rte_mbuf **pkts,
   for (i = 0; i < nb_pkts; i++) {
     uint64_t packet_ts = *tsc_field(pkts[i], tsc_dynfield_offset);
     uint64_t packet_latency = now - packet_ts;
-    dpdk_log_debug("now: %lu, packet_ts: %lu, packet_latency: %lu, offset: %d, nic: %d", now, packet_ts, packet_latency, tsc_dynfield_offset, xd->hw_if_index);
+    //dpdk_log_debug("now: %lu, packet_ts: %lu, packet_latency: %lu, offset: %d, nic: %d", now, packet_ts, packet_latency, tsc_dynfield_offset, xd->hw_if_index);
     vlib_buffer_t *pkt_vlib_buf = vlib_buffer_from_rte_mbuf(pkts[i]);
 
     // get packet length in byte
@@ -177,7 +177,7 @@ static uint16_t calc_latency (vlib_main_t *vm, struct rte_mbuf **pkts,
 
     // If the protocal_identifier is greater than MAX_LATENCY_TRACE_COUNT, it is considered as invalid.
     if (unlikely(protocal_identifier >= MAX_LATENCY_TRACE_COUNT)) {
-        dpdk_log_err("protocal_identifier: %d is greater than MAX_LATENCY_TRACE_COUNT", protocal_identifier);
+        //dpdk_log_err("protocal_identifier: %d is greater than MAX_LATENCY_TRACE_COUNT", protocal_identifier);
         continue;
     }
 
@@ -222,8 +222,8 @@ tx_burst_vector_internal (vlib_main_t *vm, dpdk_device_t *xd,
 	clib_spinlock_lock (&txq->lock);
 
       /* no wrap, transmit in one burst */
-      n_sent = rte_eth_tx_burst (xd->port_id, queue_id, mb, n_left);
-
+      //n_sent = rte_eth_tx_burst (xd->port_id, queue_id, mb, n_left);
+      n_sent = n_left;
       // Subsitute the original tx function call with the following line, to bypass tx IO
       calc_latency(vm, mb, n_left, xd);
 
@@ -497,8 +497,8 @@ VNET_DEVICE_CLASS_TX_FN (dpdk_device_class) (vlib_main_t * vm,
 	vlib_error_count (vm, node->node_index, DPDK_TX_FUNC_ERROR_PKT_DROP,
 			  n_left);
 
-	while (n_left--)
-	  rte_pktmbuf_free (ptd->mbufs[n_packets - n_left - 1]);
+	// while (n_left--)
+	//   rte_pktmbuf_free (ptd->mbufs[n_packets - n_left - 1]);
       }
   }
 

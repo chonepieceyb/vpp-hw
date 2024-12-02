@@ -34,8 +34,9 @@ struct rte_mempool **dpdk_mempool_by_buffer_pool_index = 0;
 struct rte_mempool **dpdk_no_cache_mempool_by_buffer_pool_index = 0;
 struct rte_mbuf *dpdk_mbuf_template_by_pool_index = 0;
 
-static struct rte_mbuf **pkts_wo_io;
-static struct rte_mempool *pcap_mp = NULL;
+u8 **pcap_packets;
+u32 pcap_pkt_count = 0;
+
 static const char *PCAP_PATH = "/mnt/disk1/yangbin/CODING/WorkSpace/vpp/"
 			       "vpp-hw/exps/huawei_exp/pkts_wo_io.pcap";
 
@@ -74,6 +75,7 @@ typedef struct
   uint32_t pkt_index;	 /**< Index of current packet in pcap file */
   __pcap_hdr_t info;	 /**< information on the PCAP file */
   int32_t pcap_result;	 /**< PCAP result of filter compile */
+  vlib_buffer_template_t buffer_template;
 } __pcap_info_t;
 
 static_always_inline void
@@ -96,42 +98,6 @@ __pcap_rewind (__pcap_info_t *pcap)
 
   /* Seek past the pcap header */
   (void) fseek (pcap->fp, sizeof (__pcap_hdr_t), SEEK_SET);
-}
-
-static_always_inline void
-__mbuf_iterate_cb (struct rte_mempool *mp, void *opaque, void *obj,
-		   unsigned obj_idx __rte_unused)
-{
-  __pcap_info_t *pcap = (__pcap_info_t *) opaque;
-  struct rte_mbuf *m = (struct rte_mbuf *) obj;
-  __pcap_record_hdr_t hdr = { 0 };
-
-  /* TODO: Return clib_error_t * instead of calling rte_exit() */
-
-  if (fread (&hdr, 1, sizeof (__pcap_record_hdr_t), pcap->fp) != sizeof (hdr))
-    {
-      __pcap_rewind (pcap);
-      if (fread (&hdr, 1, sizeof (__pcap_record_hdr_t), pcap->fp) !=
-	  sizeof (hdr))
-	rte_exit (EXIT_FAILURE, "%s: failed to read pcap header\n", __func__);
-    }
-
-  /* Convert the packet header to the correct format. */
-  __pcap_convert (pcap, &hdr);
-
-  if (fread (rte_pktmbuf_mtod (m, char *) + sizeof (vlib_buffer_t), 1,
-	     hdr.incl_len, pcap->fp) == 0)
-    rte_exit (EXIT_FAILURE, "%s: failed to read packet data from PCAP file\n",
-	      __func__);
-
-  m->pool = mp;
-  m->next = NULL;
-  m->data_len = hdr.incl_len;
-  m->pkt_len = hdr.incl_len;
-  m->port = 0;
-  m->ol_flags = 0;
-
-  /* TODO: Set fields in `vlib_buffer_t` */
 }
 
 static_always_inline clib_error_t *
@@ -191,12 +157,71 @@ __pcap_get_info (__pcap_info_t *pcap)
   return 0;
 }
 
+static_always_inline clib_error_t *
+dpdk_buffer_pool_load_pcap(vlib_main_t *vm, vlib_buffer_pool_t * bp, __pcap_info_t* pcap)
+{
+  uword buffer_mem_start = vm->buffer_main->buffer_mem_start;
+  u32 pkt_count, i;
+  pkt_count = pcap->pkt_count;
+
+  if (bp->n_buffers < pkt_count)
+    {
+      clib_warning("buffer pool buffer size < pcap pkt count");
+      pkt_count = bp->n_buffers;
+    }
+  
+  if (!pcap_pkt_count) 
+    {
+	pcap_pkt_count = pkt_count;
+    }
+  else if (pcap_pkt_count != pkt_count) 
+    {
+        return clib_error_return (0, "%s: failed to read pcap to pool, pkt_count not equals\n", __func__);
+    }
+
+  /* populate buffers with pcap*/
+  for (i = 0; i < pkt_count; i++)
+    {
+      vlib_buffer_t *b = vlib_buffer_ptr_from_index (buffer_mem_start, bp->buffers[i], 0);
+      clib_warning("#########populate buffer %d, buffer num %d, pool_index %d ########", i, bp->n_buffers, b->buffer_pool_index);
+      b = vlib_get_buffer (vm, bp->buffers[i]);
+      struct rte_mbuf *mb = rte_mbuf_from_vlib_buffer(b);
+      __pcap_record_hdr_t hdr = { 0 };
+
+      if (fread (&hdr, 1, sizeof (__pcap_record_hdr_t), pcap->fp) != sizeof (hdr))
+        {
+          __pcap_rewind (pcap);
+          if (fread (&hdr, 1, sizeof (__pcap_record_hdr_t), pcap->fp) != sizeof (hdr))
+	    return clib_error_return (0, "%s: failed to read pcap header\n", __func__);
+        }
+
+      /* Convert the packet header to the correct format. */
+      __pcap_convert (pcap, &hdr);
+      if (hdr.incl_len > bp->data_size) 
+        return clib_error_return (0, "%s: failed to read packet data from PCAP file, pkts is too large\n", __func__);
+      
+      clib_warning("######## rte data off %d, pkt_len %d, buffer data_size %d###########", mb->data_off, hdr.incl_len, bp->data_size);
+      if (fread (rte_pktmbuf_mtod (mb, char *), 1, hdr.incl_len, pcap->fp) == 0)
+        return clib_error_return (0, "%s: failed to read packet data from PCAP file\n", __func__);
+
+      mb->next = NULL;
+      mb->data_len = hdr.incl_len;
+      mb->pkt_len = hdr.incl_len;
+      mb->port = 0;
+      mb->ol_flags = 0;
+    }
+    __pcap_rewind (pcap); 
+    return 0;
+}
+
 clib_error_t *
-dpdk_create_pcap (void)
+dpdk_load_pcap (vlib_main_t * vm)
 {
   clib_error_t *error = 0;
+  vlib_buffer_pool_t *bp;
   __pcap_info_t pcap = { 0 };
-  uint32_t pkt_count, elt_size;
+  clib_error_t *err;
+  u32 pkt_count;
 
   pcap.filename = (char *) PCAP_PATH;
 
@@ -219,23 +244,31 @@ dpdk_create_pcap (void)
       return clib_error_return (0, "PCAP file is empty: %s", pcap.filename);
     }
 
-  elt_size = sizeof (vlib_buffer_t) + pcap.max_pkt_size;
-
-  /* TODO: Revisit name, cache_size, priv_size, socket_id */
-  pcap_mp =
-    rte_pktmbuf_pool_create ("vpp-pkt-wo-io", pkt_count, 0, 0, elt_size, 0);
-  if (!pcap_mp)
+  for (i = 0; i < pkt_count; i++)
     {
-      fclose (pcap.fp);
-      return clib_error_return (0,
-				"Cannot create mbuf pool (vpp-pkt-wo-io) "
-				"nb_mbufs %d, socket_id 0: %s",
-				pkt_count, rte_strerror (rte_errno));
+      __pcap_record_hdr_t hdr = { 0 };
+
+      if (fread (&hdr, 1, sizeof (__pcap_record_hdr_t), pcap->fp) != sizeof (hdr))
+        {
+          __pcap_rewind (pcap);
+          if (fread (&hdr, 1, sizeof (__pcap_record_hdr_t), pcap->fp) != sizeof (hdr))
+	    return clib_error_return (0, "%s: failed to read pcap header\n", __func__);
+        }
+
+      /* Convert the packet header to the correct format. */
+      __pcap_convert (pcap, &hdr);
+      if (hdr.incl_len > bp->data_size) 
+        return clib_error_return (0, "%s: failed to read packet data from PCAP file, pkts is too large\n", __func__);
+      
+      u8 *data = vec_new (u8, hdr.incl_len);
+
+      clib_warning("######## rte data off %d, pkt_len %d, buffer data_size %d###########", mb->data_off, hdr.incl_len, bp->data_size);
+      if (fread (data, 1, hdr.incl_len , pcap->fp) == 0)
+        return clib_error_return (0, "%s: failed to read packet data from PCAP file\n", __func__);
+
+      vec_add1 (pcap_packets, data);
     }
-  pcap.mp = pcap_mp;
-
-  rte_mempool_obj_iter (pcap_mp, __mbuf_iterate_cb, &pcap);
-
+  fclose (pcap.fp);
   return 0;
 }
 
@@ -674,21 +707,6 @@ dpdk_buffer_pools_create (vlib_main_t * vm)
 
 VLIB_BUFFER_SET_EXT_HDR_SIZE (sizeof (struct rte_mempool_objhdr) +
 			      sizeof (struct rte_mbuf));
-
-u32 fetch_pkts_in_memory(void *pkts, u32 *start, u32 num) 
-{
-  struct rte_mbuf **__pkts = (struct rte_mbuf**)(pkts);
-	if (num > vec_len(pkts_wo_io)) 
-	return 0;
-  u32 to = 0;
-  while (to < num) 
-    {
-        __pkts[to++] = pkts_wo_io[(*start)++];
-	if (*start == vec_len(pkts_wo_io))
-	  *start = 0;
-    }
-  return num;
-}
 
 #endif
 

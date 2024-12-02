@@ -24,9 +24,9 @@ extern struct rte_mempool **dpdk_no_cache_mempool_by_buffer_pool_index;
 
 clib_error_t *dpdk_buffer_pools_create (vlib_main_t * vm);
 
-u32 fetch_pkts_in_memory(void *pkts, u32 *start, u32 num);
+clib_error_t *dpdk_load_pcap(vlib_main_t * vm);
 
-clib_error_t *dpdk_create_pcap(void);
+extern u32 pcap_pkt_count;
 
 #endif /* include_dpdk_buffer_h */
 

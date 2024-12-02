@@ -231,8 +231,8 @@ dpdk_process_rx_burst (vlib_main_t *vm, dpdk_per_thread_data_t *ptd,
       vlib_buffer_copy_template (b[0], &bt);
       or_flags |= dpdk_ol_flags_extract (mb, flags, 1);
       flags += 1;
-
       b[0]->current_data = mb[0]->data_off - RTE_PKTMBUF_HEADROOM;
+      clib_warning("########### vlib buffer current data %d #############\n", b[0]->current_data);
       n_bytes += b[0]->current_length = mb[0]->data_len;
 
       if (maybe_multiseg)
@@ -363,6 +363,27 @@ add_timestamps(vlib_main_t * vm, struct rte_mbuf **pkts, uint16_t nb_pkts) {
 }
 /* >8 End of callback addition and application. */
 
+
+static u32 fetch_pkts_in_memory(vlib_main_t *vm, dpdk_per_thread_data_t *ptd, u32 num)
+{
+  vlib_buffer_pool_t *bp;
+  if (num > pcap_pkt_count) 
+    return 0;
+  u32 pool_idx = vm->buffer_main->default_buffer_pool_index_for_numa[vm->numa_node];
+  bp = &(vm->buffer_main->buffer_pools[pool_idx]);
+  
+  u32 to = 0;
+  u32 *start = &(ptd->pkt_wo_io_idx);
+  while (to < num) 
+    {
+	vlib_buffer_t *b = vlib_get_buffer (vm, bp->buffers[(*start)++]);
+        ptd->mbufs[to++] = rte_mbuf_from_vlib_buffer(b);
+	if (*start == pcap_pkt_count)
+	  *start = 0;
+    }
+  return num;
+}
+
 static_always_inline u32
 dpdk_device_input (vlib_main_t * vm, dpdk_main_t * dm, dpdk_device_t * xd,
 		   vlib_node_runtime_t * node, u32 thread_index, u16 queue_id)
@@ -421,9 +442,13 @@ dpdk_device_input (vlib_main_t * vm, dpdk_main_t * dm, dpdk_device_t * xd,
 //   if (n_rx_packets == 0)
 //     return 0;
   batch_size = xd->batch_size;
-  n_rx_packets = fetch_pkts_in_memory((struct rte_mbuf **)&(ptd->mbufs), &(ptd->pkt_wo_io_idx), batch_size);
+  n_rx_packets = fetch_pkts_in_memory(vm, ptd, batch_size);
   if (n_rx_packets == 0)
+  {
+    clib_warning("does not fetch packets in memory!, should not happen");
     return 0;
+  }
+    
 
   // add timestamp on each received packets
   add_timestamps(vm, ptd->mbufs, n_rx_packets);

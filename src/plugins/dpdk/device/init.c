@@ -1391,10 +1391,10 @@ dpdk_config (vlib_main_t * vm, unformat_input_t * input)
   rmdir ((char *) huge_dir_path);
   vec_free (huge_dir_path);
 
-  // /* main thread 1st */
-  // if ((error = dpdk_buffer_pools_create (vm)))
-  //   return error;
-  if ((error = dpdk_create_pcap ()))
+  /* main thread 1st */
+  if ((error = dpdk_buffer_pools_create (vm)))
+    return error;
+  if ((error = dpdk_load_pcap (vm)))
     return error;
 
   return 0;
