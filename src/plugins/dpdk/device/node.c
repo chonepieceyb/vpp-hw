@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+#include "rte_mbuf_core.h"
 #include <vnet/vnet.h>
 #include <vppinfra/vec.h>
 #include <vppinfra/error.h>
@@ -232,7 +233,6 @@ dpdk_process_rx_burst (vlib_main_t *vm, dpdk_per_thread_data_t *ptd,
       or_flags |= dpdk_ol_flags_extract (mb, flags, 1);
       flags += 1;
       b[0]->current_data = mb[0]->data_off - RTE_PKTMBUF_HEADROOM;
-      clib_warning("########### vlib buffer current data %d #############\n", b[0]->current_data);
       n_bytes += b[0]->current_length = mb[0]->data_len;
 
       if (maybe_multiseg)
@@ -363,25 +363,118 @@ add_timestamps(vlib_main_t * vm, struct rte_mbuf **pkts, uint16_t nb_pkts) {
 }
 /* >8 End of callback addition and application. */
 
+extern struct rte_mbuf *dpdk_mbuf_template_by_pool_index;
+
+static_always_inline void
+dpdk_mbuf_init_from_template (struct rte_mbuf **mba, struct rte_mbuf *mt,
+			      int count)
+{
+  /* Assumptions about rte_mbuf layout */
+  STATIC_ASSERT_OFFSET_OF (struct rte_mbuf, buf_addr, 0);
+  STATIC_ASSERT_OFFSET_OF (struct rte_mbuf, buf_iova, 8);
+  STATIC_ASSERT_SIZEOF_ELT (struct rte_mbuf, buf_iova, 8);
+  STATIC_ASSERT_SIZEOF_ELT (struct rte_mbuf, buf_iova, 8);
+  STATIC_ASSERT_SIZEOF (struct rte_mbuf, 128);
+
+  while (count--)
+    {
+      struct rte_mbuf *mb = mba[0];
+      int i;
+      /* bytes 0 .. 15 hold buf_addr and buf_iova which we need to preserve */
+      /* copy bytes 16 .. 31 */
+      *((u8x16 *) mb + 1) = *((u8x16 *) mt + 1);
+
+      /* copy bytes 32 .. 127 */
+#ifdef CLIB_HAVE_VEC256
+      for (i = 1; i < 4; i++)
+	*((u8x32 *) mb + i) = *((u8x32 *) mt + i);
+#else
+      for (i = 2; i < 8; i++)
+	*((u8x16 *) mb + i) = *((u8x16 *) mt + i);
+#endif
+      mba++;
+    }
+}
 
 static u32 fetch_pkts_in_memory(vlib_main_t *vm, dpdk_per_thread_data_t *ptd, u32 num)
 {
-  vlib_buffer_pool_t *bp;
-  if (num > pcap_pkt_count) 
-    return 0;
-  u32 pool_idx = vm->buffer_main->default_buffer_pool_index_for_numa[vm->numa_node];
-  bp = &(vm->buffer_main->buffer_pools[pool_idx]);
-  
-  u32 to = 0;
+  const int batch_size = 32;
+  u32 bufs[batch_size], total = 0, n_alloc = 0, i;
+  u32 pcap_len = vec_len(pcap_packets);
+  u32 buffer_pool_index = vm->buffer_main->default_buffer_pool_index_for_numa[vm->numa_node];
   u32 *start = &(ptd->pkt_wo_io_idx);
-  while (to < num) 
+  struct rte_mbuf t = dpdk_mbuf_template_by_pool_index[buffer_pool_index];
+  void **obj = (void **)&(ptd->mbufs);
+  if (num > pcap_len) 
+    return 0;
+
+  /* alloc buffers */
+
+  while (num >= batch_size)
     {
-	vlib_buffer_t *b = vlib_get_buffer (vm, bp->buffers[(*start)++]);
-        ptd->mbufs[to++] = rte_mbuf_from_vlib_buffer(b);
-	if (*start == pcap_pkt_count)
-	  *start = 0;
+      n_alloc = vlib_buffer_alloc_from_pool (vm, bufs, batch_size,
+					     buffer_pool_index);
+      if (n_alloc != batch_size)
+	goto alloc_fail;
+
+      vlib_get_buffers_with_offset (vm, bufs, obj, batch_size,
+				    -(i32) sizeof (struct rte_mbuf));
+      dpdk_mbuf_init_from_template ((struct rte_mbuf **) obj, &t, batch_size);
+      total += batch_size;
+      num -= batch_size;
+      obj += batch_size;
     }
-  return num;
+
+  if (num)
+    {
+      n_alloc = vlib_buffer_alloc_from_pool (vm, bufs, num, buffer_pool_index);
+
+      if (n_alloc != num)
+	goto alloc_fail;
+
+      vlib_get_buffers_with_offset (vm, bufs, obj, num,
+				    -(i32) sizeof (struct rte_mbuf));
+      dpdk_mbuf_init_from_template ((struct rte_mbuf **) obj, &t, num);
+    }
+  
+  /* copy pcap to memory */
+  obj = (void **)&(ptd->mbufs);
+  for (i = 0; i < total; i++)
+    {
+      	struct rte_mbuf *mb = (struct rte_mbuf*)(*obj);
+	u8 *data = pcap_packets[(*start)++];
+	u32 pkt_len = vec_len(data);
+	mb->data_off = VLIB_BUFFER_PRE_DATA_SIZE;
+	mb->buf_addr = (void*)mb + sizeof(struct rte_mbuf) + sizeof(vlib_buffer_t) - VLIB_BUFFER_PRE_DATA_SIZE;
+	
+	clib_memcpy_fast(rte_pktmbuf_mtod(mb, char*), data, pkt_len);
+	if (*start == pcap_len)
+	  *start = 0;
+        mb->next = NULL;
+        mb->data_len = pkt_len;
+        mb->pkt_len = pkt_len;
+        mb->port = 0;   //TODO: set to correct port ?
+        mb->ol_flags = 0;
+	obj++;
+    }
+  return total;
+
+alloc_fail:
+  /* dpdk doesn't support partial alloc, so we need to return what we
+     already got */
+  if (n_alloc)
+    vlib_buffer_pool_put (vm, buffer_pool_index, bufs, n_alloc);
+  obj = (void **)&(ptd->mbufs);
+  while (total)
+    {
+      vlib_get_buffer_indices_with_offset (vm, obj, bufs, batch_size,
+					   sizeof (struct rte_mbuf));
+      vlib_buffer_pool_put (vm, buffer_pool_index, bufs, batch_size);
+
+      obj += batch_size;
+      total -= batch_size;
+    }
+  return 0;
 }
 
 static_always_inline u32

@@ -225,6 +225,7 @@ if __name__ == '__main__':
                             plugins "{{ plugin default {{ enable }} plugin dpdk_plugin.so {{ enable }} plugin crypto_native_plugin.so {{ enable }} plugin crypto_openssl_plugin.so {{enable}} plugin ping_plugin.so {{enable}} plugin pppoe_plugin.so {{enable}} plugin nat_plugin.so {{enable}} plugin perfmon.so {{enable}}}}"  \\
                             dpdk "{{ dev {pcie_addr[0]} {{ name {Ethernet0} num-tx-queues {queues_count} num-rx-queues {queues_count} }} \\
                                     dev {pcie_addr[1]} {{ name {Ethernet1} num-tx-queues {queues_count} num-rx-queues {queues_count} }} }}" \\
+                            buffers "{{default data-size 9000}}" \\
                         """
     vpp_start_command_with_tun = f"""sudo {vpp_binary} unix "{{ runtime-dir {VPP_RUNTIME_DIR} cli-listen {SOCKFILE} pidfile {VPP_REMOTE_PIDFILE} }}" \\
                             cpu "{{ main-core {main_core} corelist-workers {worker_core} }}" \\

@@ -26,7 +26,7 @@ clib_error_t *dpdk_buffer_pools_create (vlib_main_t * vm);
 
 clib_error_t *dpdk_load_pcap(vlib_main_t * vm);
 
-extern u32 pcap_pkt_count;
+extern u8** pcap_packets;
 
 #endif /* include_dpdk_buffer_h */
 

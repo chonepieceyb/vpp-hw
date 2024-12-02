@@ -196,6 +196,67 @@ static uint16_t calc_latency (vlib_main_t *vm, struct rte_mbuf **pkts,
   xd->total_lat_stats.total_pkts += nb_pkts;
   return nb_pkts;
 }
+
+static_always_inline void
+dpdk_ops_vpp_enqueue_one (vlib_buffer_template_t *bt, void *obj)
+{
+  /* Only non-replicated packets (b->ref_count == 1) expected */
+
+  struct rte_mbuf *mb = obj;
+  vlib_buffer_t *b = vlib_buffer_from_rte_mbuf (mb);
+  ASSERT (b->ref_count == 1);
+  ASSERT (b->buffer_pool_index == bt->buffer_pool_index);
+  b->template = *bt;
+}
+
+static_always_inline void 
+dpdk_free_vlib_buffers (vlib_main_t *vm, void *const *obj_table, unsigned n)
+{
+  const int batch_size = 32;
+  vlib_buffer_template_t bt;
+  u32 buffer_pool_index = vm->buffer_main->default_buffer_pool_index_for_numa[vm->numa_node];
+  vlib_buffer_pool_t *bp = vlib_get_buffer_pool (vm, buffer_pool_index);
+  u32 bufs[batch_size];
+  u32 n_left = n;
+  void *const *obj = obj_table;
+
+  bt = bp->buffer_template;
+
+  while (n_left >= 4)
+    {
+      dpdk_ops_vpp_enqueue_one (&bt, obj[0]);
+      dpdk_ops_vpp_enqueue_one (&bt, obj[1]);
+      dpdk_ops_vpp_enqueue_one (&bt, obj[2]);
+      dpdk_ops_vpp_enqueue_one (&bt, obj[3]);
+      obj += 4;
+      n_left -= 4;
+    }
+
+  while (n_left)
+    {
+      dpdk_ops_vpp_enqueue_one (&bt, obj[0]);
+      obj += 1;
+      n_left -= 1;
+    }
+
+  while (n >= batch_size)
+    {
+      vlib_get_buffer_indices_with_offset (vm, (void **) obj_table, bufs,
+					   batch_size,
+					   sizeof (struct rte_mbuf));
+      vlib_buffer_pool_put (vm, buffer_pool_index, bufs, batch_size);
+      n -= batch_size;
+      obj_table += batch_size;
+    }
+
+  if (n)
+    {
+      vlib_get_buffer_indices_with_offset (vm, (void **) obj_table, bufs,
+					   n, sizeof (struct rte_mbuf));
+      vlib_buffer_pool_put (vm, buffer_pool_index, bufs, n);
+    }
+}
+
 /* >8 End of callback addition. */
 
 /*
@@ -210,31 +271,41 @@ tx_burst_vector_internal (vlib_main_t *vm, dpdk_device_t *xd,
 			  u8 is_shared)
 {
   dpdk_tx_queue_t *txq;
-  u32 n_retry;
   int n_sent = 0;
 
-  n_retry = 16;
   txq = vec_elt_at_index (xd->tx_queues, queue_id);
 
-  do
-    {
-      if (is_shared)
-	clib_spinlock_lock (&txq->lock);
+//   do
+//     {
+//       if (is_shared)
+// 	clib_spinlock_lock (&txq->lock);
 
-      /* no wrap, transmit in one burst */
-      //n_sent = rte_eth_tx_burst (xd->port_id, queue_id, mb, n_left);
-      n_sent = n_left;
-      // Subsitute the original tx function call with the following line, to bypass tx IO
-      calc_latency(vm, mb, n_left, xd);
+//       /* no wrap, transmit in one burst */
+//       n_sent = rte_eth_tx_burst (xd->port_id, queue_id, mb, n_left);
+//       // Subsitute the original tx function call with the following line, to bypass tx IO
+//       calc_latency(vm, mb, n_left, xd);
 
-      if (is_shared)
-	clib_spinlock_unlock (&txq->lock);
+//       if (is_shared)
+// 	clib_spinlock_unlock (&txq->lock);
 
-      n_retry--;
-      n_left -= n_sent;
-      mb += n_sent;
-    }
-  while (n_sent && n_left && (n_retry > 0));
+//       n_retry--;
+//       n_left -= n_sent;
+//       mb += n_sent;
+//     }
+//   while (n_sent && n_left && (n_retry > 0));
+  
+  //directly put all buffers 
+
+  if (is_shared)
+    clib_spinlock_lock (&txq->lock);
+  
+  dpdk_free_vlib_buffers(vm, (void *const *)mb, n_left);
+  n_sent = n_left;
+  n_left = 0;
+  calc_latency(vm, mb, n_left, xd);
+
+  if (is_shared)
+    clib_spinlock_unlock (&txq->lock);
 // TODO: dpdk tx error fix 
 //   while (n_left!=0);
 
