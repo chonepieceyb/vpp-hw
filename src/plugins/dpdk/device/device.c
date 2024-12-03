@@ -293,7 +293,8 @@ tx_burst_vector_internal (vlib_main_t *vm, dpdk_device_t *xd,
 //       mb += n_sent;
 //     }
 //   while (n_sent && n_left && (n_retry > 0));
-  
+
+  calc_latency(vm, mb, n_left, xd);
   //directly put all buffers 
 
   if (is_shared)
@@ -302,7 +303,6 @@ tx_burst_vector_internal (vlib_main_t *vm, dpdk_device_t *xd,
   dpdk_free_vlib_buffers(vm, (void *const *)mb, n_left);
   n_sent = n_left;
   n_left = 0;
-  calc_latency(vm, mb, n_left, xd);
 
   if (is_shared)
     clib_spinlock_unlock (&txq->lock);

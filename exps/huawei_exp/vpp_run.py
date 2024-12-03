@@ -102,6 +102,7 @@ def nat_setup():
     subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'nat44', 'plugin', 'enable'])
     # subprocess.run(["sudo", vppctl_binary, "-s", SOCKFILE, "set", "int", "nat44", "out", Ethernet1])
     subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'set', 'int', 'nat44', 'in', Ethernet0])
+    subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'set', 'int', 'nat44', 'in', Ethernet1])
     # 设置n条无效的NAT，填充nat表
     for i in range(1, nat_range1):
         for j in range(1, nat_range2):
