@@ -157,16 +157,18 @@ tsc_field (struct rte_mbuf *mbuf, int offset)
 }
 
 /* Callback is added to the TX port. 8< */
-static uint16_t calc_latency (vlib_main_t *vm, struct rte_mbuf **pkts,
-                               uint16_t nb_pkts, dpdk_device_t *xd) {
+static void calc_latency (vlib_main_t *vm, struct rte_mbuf **pkts,
+                               uint16_t nb_pkts, dpdk_per_thread_data_t *ptd) {
+  if (PREDICT_FALSE(vm->barrier_flush))
+    return;
   // get nano second now timestamp
   uint64_t now = (uint64_t) (vlib_time_now(vlib_get_main()) * 1e9);
-  struct dpdk_lat_t *lat_stats = xd->lat_stats;
+  struct dpdk_lat_t *lat_stats = ptd->lat_stats;
   unsigned i;
   for (i = 0; i < nb_pkts; i++) {
     uint64_t packet_ts = *tsc_field(pkts[i], tsc_dynfield_offset);
     uint64_t packet_latency = now - packet_ts;
-    dpdk_log_debug("now: %lu, packet_ts: %lu, packet_latency: %lu, offset: %d, nic: %d", now, packet_ts, packet_latency, tsc_dynfield_offset, xd->hw_if_index);
+    dpdk_log_debug("now: %lu, packet_ts: %lu, packet_latency: %lu, offset: %d", now, packet_ts, packet_latency, tsc_dynfield_offset);
     vlib_buffer_t *pkt_vlib_buf = vlib_buffer_from_rte_mbuf(pkts[i]);
 
     // get packet length in byte
@@ -187,14 +189,14 @@ static uint16_t calc_latency (vlib_main_t *vm, struct rte_mbuf **pkts,
     }
 
     // Update the latency statistics, actually total_latency store the latency time(ns)
-    xd->lat_stats[protocal_identifier].total_pkts++;
-    xd->lat_stats[protocal_identifier].total_latency += packet_latency;
-    xd->lat_stats[protocal_identifier].total_bytes += packet_length;
-    xd->total_lat_stats.total_latency += packet_latency;
-    xd->total_lat_stats.total_bytes += packet_length;
+    lat_stats[protocal_identifier].total_pkts++;
+    lat_stats[protocal_identifier].total_latency += packet_latency;
+    lat_stats[protocal_identifier].total_bytes += packet_length;
+    ptd->total_lat_stats.total_latency += packet_latency;
+    ptd->total_lat_stats.total_bytes += packet_length;
   }
-  xd->total_lat_stats.total_pkts += nb_pkts;
-  return nb_pkts;
+  ptd->total_lat_stats.total_pkts += nb_pkts;
+  return;
 }
 /* >8 End of callback addition. */
 
@@ -210,6 +212,9 @@ tx_burst_vector_internal (vlib_main_t *vm, dpdk_device_t *xd,
 			  u8 is_shared)
 {
   dpdk_tx_queue_t *txq;
+  dpdk_main_t *dm = &dpdk_main;
+  dpdk_per_thread_data_t *ptd = vec_elt_at_index (dm->per_thread_data,
+						  vm->thread_index);
   u32 n_retry;
   int n_sent = 0;
 
@@ -222,10 +227,13 @@ tx_burst_vector_internal (vlib_main_t *vm, dpdk_device_t *xd,
 	clib_spinlock_lock (&txq->lock);
 
       /* no wrap, transmit in one burst */
-      n_sent = rte_eth_tx_burst (xd->port_id, queue_id, mb, n_left);
+      //n_sent = rte_eth_tx_burst (xd->port_id, queue_id, mb, n_left);
+      //directly free 
+      rte_pktmbuf_free_bulk(mb, n_left);
+      n_sent = n_left; 
 
       // Subsitute the original tx function call with the following line, to bypass tx IO
-      calc_latency(vm, mb, n_left, xd);
+      calc_latency(vm, mb, n_left, ptd);
 
       if (is_shared)
 	clib_spinlock_unlock (&txq->lock);

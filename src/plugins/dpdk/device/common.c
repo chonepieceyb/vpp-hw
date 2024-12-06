@@ -183,9 +183,6 @@ void dpdk_device_setup(dpdk_device_t *xd) {
   conf.rxmode.mtu = max_frame_size - xd->driver_frame_overhead;
 #endif
 
-  // init startup timestamp
-  xd->last_timestamp = vlib_time_now(vm);
-
 retry:
   rv = rte_eth_dev_configure (xd->port_id, xd->conf.n_rx_queues,
                              xd->conf.n_tx_queues, &conf);

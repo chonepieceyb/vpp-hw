@@ -12,6 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #include <vnet/vnet.h>
 #include <vppinfra/vec.h>
 #include <vppinfra/error.h>
@@ -1512,7 +1513,7 @@ dpdk_process (vlib_main_t * vm, vlib_node_runtime_t * rt, vlib_frame_t * f)
   {
     dpdk_update_link_state (xd, now);
   }
-
+  dm->last_timestamp = vlib_time_now(vm);
   while (1)
     {
       /*
