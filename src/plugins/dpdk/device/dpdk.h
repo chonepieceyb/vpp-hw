@@ -330,12 +330,12 @@ typedef struct
   u16 next[DPDK_RX_BURST_SZ];
   u16 etype[DPDK_RX_BURST_SZ];
   u32 flags[DPDK_RX_BURST_SZ];
-  vlib_buffer_t buffer_template;
-
   /* latency calculation used temp store */
   CLIB_CACHE_LINE_ALIGN_MARK (cacheline1);
   struct dpdk_lat_t total_lat_stats;
   struct dpdk_lat_t lat_stats[MAX_LATENCY_TRACE_COUNT];
+  vlib_buffer_t buffer_template;
+
 } dpdk_per_thread_data_t;
 
 typedef struct
