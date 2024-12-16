@@ -220,13 +220,6 @@ typedef struct
   struct rte_eth_xstat *xstats;
   f64 time_last_stats_update;
 
-  /* latency calculation used temp store */
-  struct dpdk_lat_t lat_stats[MAX_LATENCY_TRACE_COUNT];
-  struct dpdk_lat_t total_lat_stats;
-
-  /* last timestamp used in avg throughput calculation */
-  f64 last_timestamp;
-
   /* mac address */
   u8 *default_mac_address;
 
@@ -337,7 +330,12 @@ typedef struct
   u16 next[DPDK_RX_BURST_SZ];
   u16 etype[DPDK_RX_BURST_SZ];
   u32 flags[DPDK_RX_BURST_SZ];
+  /* latency calculation used temp store */
+  CLIB_CACHE_LINE_ALIGN_MARK (cacheline1);
+  struct dpdk_lat_t total_lat_stats;
+  struct dpdk_lat_t lat_stats[MAX_LATENCY_TRACE_COUNT];
   vlib_buffer_t buffer_template;
+
 } dpdk_per_thread_data_t;
 
 typedef struct
@@ -365,6 +363,9 @@ typedef struct
   /* logging */
   vlib_log_class_t log_default;
   vlib_log_class_t log_cryptodev;
+
+  /* last timestamp used in avg throughput calculation */
+  f64 last_timestamp;
 } dpdk_main_t;
 
 extern dpdk_main_t dpdk_main;

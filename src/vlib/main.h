@@ -265,7 +265,7 @@ typedef struct vlib_main_t
   /* address sanitizer stack save */
   void *asan_stack_save;
 #endif
-  int barrier_flush;
+  volatile int barrier_flush;
 } vlib_main_t;
 
 typedef struct vlib_global_main_t

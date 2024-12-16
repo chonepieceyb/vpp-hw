@@ -5,16 +5,6 @@ import argparse
 
 # 使用示例：sudo python3 vpp_run.py -c 10,11-12
 
-# node2&4
-# Trex 收包网卡的mac地址（从VPP转出的对端网卡）
-trex_rx_mac = '6c:b3:11:21:b6:62'
-# 网卡PCIE设置,数组分别是Ethernet0和Ethernet1的PCIE地址
-pcie_addr = ['0000:08:00.0', '0000:08:00.1']
-
-# node3&5
-trex_rx_mac = '04:3f:72:f4:40:4a'
-pcie_addr = ['0000:84:00.0', '0000:84:00.1']
-
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # vpp和vppctl的路径
 vppctl_binary = os.path.join(PROJECT_ROOT, 'build-root/build-vpp-native/vpp/bin/vppctl')
@@ -24,7 +14,7 @@ vpp_binary = os.path.join(PROJECT_ROOT, 'build-root/build-vpp-native/vpp/bin/vpp
 vppctl_binary_debug = os.path.join(PROJECT_ROOT, 'build-root/build-vpp_debug-native/vpp/bin/vppctl')
 vpp_binary_debug = os.path.join(PROJECT_ROOT, 'build-root/build-vpp_debug-native/vpp/bin/vpp')
 
-# 原版vpp的路径(node5)
+# 原版vpp的路径
 vppctl_binary_origin = '/mnt/disk1/zhaolunqi/vpp/build-root/install-vpp-native/vpp/bin/vppctl'
 vpp_binary_origin = '/mnt/disk1/zhaolunqi/vpp/build-root/install-vpp-native/vpp/bin/vpp'
 
@@ -36,13 +26,13 @@ nat_range2 = 255
 Ethernet0 = 'Ethernet0'
 Ethernet1 = 'Ethernet1'
 
-# tap设备的mac地址
-tap_mac = '02:fe:75:90:1d:5d'
-
 # VPP runtime socket目录位置
 VPP_RUNTIME_DIR = '/run/vpp/remote'
 SOCKFILE = os.path.join(VPP_RUNTIME_DIR, 'cli_remote.sock')
 VPP_REMOTE_PIDFILE = os.path.join(VPP_RUNTIME_DIR, 'vpp_remote.pid')
+
+# 网卡PCIE设置,数组分别是Ethernet0和Ethernet1的PCIE地址
+pcie_addr = ['0000:08:00.0', '0000:08:00.1']
 
 
 def help_func():
@@ -90,19 +80,16 @@ def tap_setup():
     # set int l2 bridge loop0 1 bvi
     # set int ip address loop0 192.168.1.1/24
     # set int state loop0 up
-    # create tap host-if-name vpptap host-ip4-addr 192.168.1.2/24 host-mac-addr 02:fe:75:90:1d:5d
+    # create tap host-if-name lstack host-ip4-addr 192.168.1.2/24
     # set int l2 bridge tap0 1
     # set int state tap0 up
-    # set ip neighbor loop0 192.168.4.2 02:fe:75:90:1d:5d
     subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'loopback', 'create-interface'])
     subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'set', 'int', 'l2', 'bridge', 'loop0', '1', 'bvi'])
     subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'set', 'int', 'ip', 'address', 'loop0', '192.168.4.1/24'])
     subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'set', 'int', 'state', 'loop0', 'up'])
-    subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'create', 'tap', 'host-if-name', 'vpptap', 'host-ip4-addr', '192.168.4.2/24', 'host-mac-addr', tap_mac])
+    subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'create', 'tap', 'host-if-name', 'lstack', 'host-ip4-addr', '192.168.4.2/24'])
     subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'set', 'int', 'l2', 'bridge', 'tap0', '1'])
     subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'set', 'int', 'state', 'tap0', 'up'])
-    subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'set', 'ip', 'neighbor', 'loop0', '192.168.4.2', tap_mac])
-    print('TAP configuration successful!')
 
 
 def nat_setup():
@@ -116,14 +103,12 @@ def nat_setup():
     # subprocess.run(["sudo", vppctl_binary, "-s", SOCKFILE, "set", "int", "nat44", "out", Ethernet1])
     subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'set', 'int', 'nat44', 'in', Ethernet0])
     # 设置n条无效的NAT，填充nat表
-    print('Adding useless nat44 address...')
     for i in range(1, nat_range1):
         for j in range(1, nat_range2):
             subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'nat44', 'add', 'address', f'220.220.{i}.{j}'])
             subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'nat44', 'add', 'static', 'mapping', 'local', f'192.82.{i}.{j}', 'external', f'220.220.{i}.{j}'])
         print(f'nat44 address {i*nat_range2}/{(nat_range1-1)*nat_range2} configuration successful!')
-    # 流量模板中设置ipv4 NAT流的目的ip范围是10.168.3.2 ~ 10.168.3.255
-    print('Adding useful nat44 address...')
+    #     设置一半的ipv4流经过NAT转换
     for i in range(1, 256):
         subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'nat44', 'add', 'address', f'10.168.3.{i}'])
         subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'nat44', 'add', 'static', 'mapping', 'local', f'192.168.3.{i}', 'external', f'10.168.3.{i}'])
@@ -136,23 +121,33 @@ def acl_setup():
     # classify table acl-miss-next deny mask l3 ip4 dst buckets 1000
     # classify session acl-hit-next permit table-index 0 match l3 ip4 dst 192.162.0.1
     # classify session acl-hit-next permit table-index 0 match l3 ip4 dst 192.82.0.2
-    # set interface input acl intfc Ethernet0 ip4-table 0
-    # set interface input acl intfc Ethernet1 ip4-table 0
+    # set interface input acl intfc "${Ethernet0}" ip4-table 0
     subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'classify', 'table', 'acl-miss-next', 'permit', 'mask', 'l3', 'ip4', 'dst', 'buckets', '1000'])
-    # 设置10条无效的ACL，填充ACL表
     for i in range(1, 11):
         subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'classify', 'session', 'acl-hit-next', 'deny', 'table-index', '0', 'match', 'l3', 'ip4', 'dst', f'118.118.0.{i}'])
-    # 设置有效的ACL（流量模板中会出现的dst IP）
-    # classify session acl-hit-next permit table-index 0 match l3 ip4 dst 192.168.3.1
-    subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'classify', 'session', 'acl-hit-next', 'permit', 'table-index', '0', 'match', 'l3', 'ip4', 'dst', '192.168.3.1']) # 非nat转发
-    subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'classify', 'session', 'acl-hit-next', 'permit', 'table-index', '0', 'match', 'l3', 'ip4', 'dst', '192.168.4.2']) # 主机报文
-    # 设置让NAT流的ACL命中
-    # for i in range(2, 256):
-        # subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'classify', 'session', 'acl-hit-next', 'permit', 'table-index', '0', 'match', 'l3', 'ip4', 'dst', f'192.168.3.{i}']) # nat转发
     subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'set', 'interface', 'input', 'acl', 'intfc', Ethernet0, 'ip4-table', '0'])
     subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'set', 'interface', 'input', 'acl', 'intfc', Ethernet1, 'ip4-table', '0'])
     print('ACL configuration successful!')
 
+# 配置网卡L2转发模式
+def setup_iface_l2():
+    # create bridge-domain 10
+    # set interface l2 bridge Ethernet0 10
+    # set interface l2 bridge Ethernet1 10
+    # l2fib add 6c:b3:11:21:b6:5a 10 Ethernet1 static
+    subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'set', 'interface', 'state', Ethernet0, 'up'])
+    subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'set', 'interface', 'state', Ethernet1, 'up'])
+    subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'create', 'bridge-domain', '10'])
+    subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'set', 'interface', 'l2', 'bridge', Ethernet0, '10'])
+    subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'set', 'interface', 'l2', 'bridge', Ethernet1, '10'])
+    subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'l2fib', 'add', '6c:b3:11:21:b6:5a', '10', Ethernet1, 'static'])
+    # 检查网卡是否启动成功
+    output = subprocess.check_output(['sudo', vppctl_binary, '-s', SOCKFILE, 'show', 'interface']).decode()
+    if Ethernet0 in output and Ethernet1 in output:
+        print('Successfully set up interfaces!')
+    else:
+        print('Failed to set up interfaces!')
+        err_cleanup()
 
 def setup_iface():
     # 网卡设置
@@ -175,8 +170,8 @@ def setup_iface():
         err_cleanup()
 
     # 借助 192.168.1.100 这个虚拟下一跳IP(Trex收包port的IP)，配置路由表
-    subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'set', 'ip', 'neighbor', Ethernet1, '192.168.2.2', trex_rx_mac])
-    subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'set', 'ip', 'neighbor', Ethernet1, '::2:2', trex_rx_mac])
+    subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'set', 'ip', 'neighbor', Ethernet1, '192.168.2.2', '6c:b3:11:21:b6:62'])
+    subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'set', 'ip', 'neighbor', Ethernet1, '::2:2', '6c:b3:11:21:b6:62'])
     # 将IPv4 L3 fwd流量转回node3 Trex
     subprocess.run(['sudo', vppctl_binary, '-s', SOCKFILE, 'ip', 'route', 'add', '192.168.3.0/24', 'via', '192.168.2.2', Ethernet1])
     # 将IPv6 L3 fwd流量转回node3 Trex
@@ -247,11 +242,20 @@ if __name__ == '__main__':
     # 启动VPP
     vpp_start_command = f"""sudo {vpp_binary} unix "{{ runtime-dir {VPP_RUNTIME_DIR} cli-listen {SOCKFILE} pidfile {VPP_REMOTE_PIDFILE} }}" \\
                             cpu "{{ main-core {main_core} corelist-workers {worker_core} }}" \\
+                            plugins "{{ plugin default {{ enable }} plugin dpdk_plugin.so {{ enable }} plugin crypto_native_plugin.so {{ enable }} plugin crypto_openssl_plugin.so {{enable}} plugin ping_plugin.so {{enable}} plugin pppoe_plugin.so {{enable}} plugin nat_plugin.so {{enable}} plugin perfmon.so {{enable}}}}"  \\
+                            dpdk "{{ dev {pcie_addr[0]} {{ name {Ethernet0} num-tx-queues {queues_count} num-rx-queues {queues_count} }} \\
+                                    dev {pcie_addr[1]} {{ name {Ethernet1} num-tx-queues {queues_count} num-rx-queues {queues_count} }} }}" \\
+                        """
+    vpp_start_command_with_tun = f"""sudo {vpp_binary} unix "{{ runtime-dir {VPP_RUNTIME_DIR} cli-listen {SOCKFILE} pidfile {VPP_REMOTE_PIDFILE} }}" \\
+                            cpu "{{ main-core {main_core} corelist-workers {worker_core} }}" \\
                             plugins "{{ plugin default {{ enable }} plugin dpdk_plugin.so {{ enable }} plugin crypto_native_plugin.so {{ enable }} plugin crypto_openssl_plugin.so {{enable}} plugin ping_plugin.so {{enable}} plugin pppoe_plugin.so {{enable}} plugin nat_plugin.so {{enable}} plugin bufmon.so {{enable}}}}"  \\
                             dpdk "{{ dev {pcie_addr[0]} {{ name {Ethernet0} num-tx-queues {queues_count} num-rx-queues {queues_count} }} \\
                                     dev {pcie_addr[1]} {{ name {Ethernet1} num-tx-queues {queues_count} num-rx-queues {queues_count} }} }}" \\
-                            tuntap "{{ enable }}"
+                            tuntap "{{ enable ethernet name newtap }}"
                         """
+    if use_tun:
+        vpp_start_command = vpp_start_command_with_tun
+        print('- Using tun device to redirect host packet')
 
     subprocess.run([vpp_start_command], shell=True)
 
@@ -275,6 +279,7 @@ if __name__ == '__main__':
     print('Setting up DPDK interfaces...')
 
     # 网卡设置 + 路由配置
-    setup_iface()
+    # setup_iface()
+    setup_iface_l2()
 
     print('Successfully start remote VPP instance!')
