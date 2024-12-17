@@ -1717,6 +1717,7 @@ vlib_main_or_worker_loop (vlib_main_t * vm, int is_main)
 //       for (i = 0; i < _vec_len (nm->pending_frames); i++)
 // 	cpu_time_now = dispatch_pending_node (vm, i, cpu_time_now);
       i = 0;
+      //u32 ths = vm->timeout_ths, cnt = 0;
       while (1)
         {
 	  /* dispatch node */
@@ -2126,6 +2127,7 @@ vlib_main (vlib_main_t * volatile vm, unformat_input_t * input)
   vec_set_len (vm->pending_rpc_requests, 0);
   vec_validate (vm->processing_rpc_requests, 0);
   vec_set_len (vm->processing_rpc_requests, 0);
+  vm->timeout_ths = ~0;
 
   /* Default params for the buffer allocator fault injector, if configured */
   if (VLIB_BUFFER_ALLOC_FAULT_INJECTOR > 0)

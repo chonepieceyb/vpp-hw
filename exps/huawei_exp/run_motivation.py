@@ -213,12 +213,14 @@ if __name__ == '__main__':
     # 启动VPP
     vpp_start_command = f"""sudo {vpp_binary} unix "{{ runtime-dir {VPP_RUNTIME_DIR} cli-listen {SOCKFILE} pidfile {VPP_REMOTE_PIDFILE} }}" \\
                             cpu "{{ main-core {main_core} corelist-workers {worker_core} }}" \\
-                            plugins "{{ plugin default {{ enable }} plugin dpdk_plugin.so {{ enable }} plugin crypto_native_plugin.so {{ enable }} plugin crypto_openssl_plugin.so {{enable}} plugin ping_plugin.so {{enable}} plugin pppoe_plugin.so {{enable}} plugin nat_plugin.so {{enable}} plugin perfmon.so {{enable}} plugin dispatcher.so {{enable}} plugin protocol1_plugin.so {{enable}} plugin protocol2_plugin.so {{enable}} plugin protocol3_plugin.so {{enable}} plugin protocol4_plugin.so {{enable}} plugin protocol5_plugin.so {{enable}} plugin protocol6_plugin.so {{enable}} plugin protocol7_plugin.so {{enable}} plugin protocol8_plugin.so {{enable}} {{enable}} plugin protocol9_plugin.so {{enable}} plugin protocol10_plugin.so {{enable}} plugin protocol11_plugin.so {{enable}} plugin protocol12_plugin.so {{enable}} plugin protocol13_plugin.so {{enable}} plugin protocol14_plugin.so {{enable}} plugin protocol15_plugin.so {{enable}} plugin protocol16_plugin.so {{enable}} }}"  \\
+                            plugins "{{ plugin default {{ enable }} plugin dpdk_plugin.so {{ enable }} plugin crypto_native_plugin.so {{ enable }} plugin crypto_openssl_plugin.so {{enable}} plugin ping_plugin.so {{enable}} plugin pppoe_plugin.so {{enable}} plugin nat_plugin.so {{enable}} plugin perfmon.so {{enable}} plugin dispatcher.so {{enable}} plugin protocol1_plugin.so {{enable}} plugin protocol2_plugin.so {{enable}} plugin protocol3_plugin.so {{enable}} plugin protocol4_plugin.so {{enable}} plugin protocol5_plugin.so {{enable}} plugin protocol6_plugin.so {{enable}} plugin protocol7_plugin.so {{enable}} plugin protocol8_plugin.so {{enable}} plugin protocol9_plugin.so {{enable}} plugin protocol10_plugin.so {{enable}} plugin protocol11_plugin.so {{enable}} plugin protocol12_plugin.so {{enable}} plugin protocol13_plugin.so {{enable}} plugin protocol14_plugin.so {{enable}} plugin protocol15_plugin.so {{enable}} plugin protocol16_plugin.so {{enable}}}}"  \\
                             dpdk "{{ dev {pcie_addr[0]} {{ name {Ethernet0} num-tx-queues {queues_count} num-rx-queues {queues_count} }} \\
                                     dev {pcie_addr[1]} {{ name {Ethernet1} num-tx-queues {queues_count} num-rx-queues {queues_count} }} }}" \\
                             buffers "{{default data-size 2048}}" \\
                         """
-
+    
+    print(vpp_start_command)
+    
     subprocess.run([vpp_start_command], shell=True)
 
     print('Remote VPP starting up')

@@ -266,6 +266,7 @@ typedef struct vlib_main_t
   void *asan_stack_save;
 #endif
   volatile int barrier_flush;
+  u32 timeout_ths;
 } vlib_main_t;
 
 typedef struct vlib_global_main_t

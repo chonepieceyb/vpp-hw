@@ -1055,6 +1055,57 @@ VLIB_CLI_COMMAND (set_node_batch_command, static) = {
   .function = set_node_batch,
 };
 
+static clib_error_t *
+set_node_timeout_ths_command_fn (vlib_main_t *vm, unformat_input_t *input,
+		vlib_cli_command_t *cmd)
+{
+  unformat_input_t _line_input, *line_input = &_line_input;
+  clib_error_t *error = 0;
+  u32 ths = 0;
+  if (!unformat_user (input, unformat_line_input, line_input))
+    goto out;
+
+  while (unformat_check_input (line_input) != UNFORMAT_END_OF_INPUT)
+    {
+      if (!unformat (line_input, "%u", &ths))
+       break;
+      else
+	{
+	  error = clib_error_return (0, "parse error: '%U'",
+				     format_unformat_error, line_input);
+	  goto out_free_line_input;
+	}
+       
+    }
+
+  if (ths == 0)
+    {
+      ths = ~0;
+    }
+
+  vlib_worker_thread_barrier_sync (vm);
+
+  u32 i = 0;
+  for (i = 1; i < vlib_get_n_threads (); i++)
+    {
+	vlib_main_t *vm_clone;
+	vm_clone = vlib_get_main_by_index (i);
+	vm_clone->timeout_ths = ths;
+    }
+  vlib_worker_thread_barrier_release (vm);
+
+out_free_line_input:
+  unformat_free (line_input);
+out:
+  return error;
+}
+
+VLIB_CLI_COMMAND (set_node_timeout_ths_command, static) = {
+  .path = "set node timeout_ths",
+  .short_help = "set node timeout_ths <ths>",
+  .function = set_node_timeout_ths_command_fn,
+};
+
 /* Dummy function to get us linked in. */
 void
 vlib_node_cli_reference (void)
