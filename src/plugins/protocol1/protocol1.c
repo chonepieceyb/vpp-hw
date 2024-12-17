@@ -156,7 +156,7 @@ VLIB_INIT_FUNCTION (protocol1_init);
 /* *INDENT-OFF* */
 VNET_FEATURE_INIT (protocol1, static) =
 {
-  .arc_name = "ip4-unicast",
+  .arc_name = "device-input",
   .node_name = "protocol1",
   .runs_after = VNET_FEATURES ("dispatcher")
 };

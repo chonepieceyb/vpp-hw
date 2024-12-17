@@ -258,7 +258,7 @@ VLIB_REGISTER_NODE(dispatcher_node) = {
                    [DISPATCHER_NEXT_PROTOCOL_14] = "protocol14",
                    [DISPATCHER_NEXT_PROTOCOL_15] = "protocol15",
                    [DISPATCHER_NEXT_PROTOCOL_16] = "protocol16",
-                   [DISPATCHER_NEXT_DROP] = "ip4-drop"},
+                   [DISPATCHER_NEXT_DROP] = "ip6-drop"},
 };
 #endif /* CLIB_MARCH_VARIANT */
 /* *INDENT-ON* */

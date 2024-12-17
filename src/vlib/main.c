@@ -1717,17 +1717,17 @@ vlib_main_or_worker_loop (vlib_main_t * vm, int is_main)
 //       for (i = 0; i < _vec_len (nm->pending_frames); i++)
 // 	cpu_time_now = dispatch_pending_node (vm, i, cpu_time_now);
       i = 0;
-      //u32 ths = vm->timeout_ths, cnt = 0;
+      u32 ths = vm->timeout_ths, cnt = 0;
       while (1)
         {
 	  /* dispatch node */
 	  cpu_time_now = clib_cpu_time_now ();
-	  for (; i < _vec_len (nm->pf_runq); i++) {
+	  for (; i < _vec_len (nm->pf_runq) && cnt < ths; i++, cnt++) {
 	    //clib_warning("+++++++vpp runq idx %lu pfidx %lu", i, nm->pf_runq[i]);
 	    ASSERT (!pool_is_free_index(nm->pending_frames, nm->pf_runq[i]));
 	    cpu_time_now = dispatch_pending_node (vm, nm->pf_runq[i], cpu_time_now);
 	  }
-	  
+	  cnt = 0;
 	  /* check waiting queue */
 	  tw_timer_expire_timers_pf_waitq(nm->pf_waitq, vlib_time_now (vm));
 

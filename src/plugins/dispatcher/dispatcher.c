@@ -188,10 +188,8 @@ VLIB_INIT_FUNCTION (dispatcher_init);
 /* *INDENT-OFF* */
 VNET_FEATURE_INIT (dispatcher, static) =
 {
-  .arc_name = "ip4-unicast",
+  .arc_name = "device-input",
   .node_name = "dispatcher",
-  .runs_before = VNET_FEATURES ("ip4-drop"),
-  .runs_after = VNET_FEATURES ("ip4-input", "ip4-input-no-checksum")
 };
 /* *INDENT-ON */
 
