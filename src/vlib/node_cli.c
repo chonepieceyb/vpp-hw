@@ -1067,7 +1067,7 @@ set_node_timeout_ths_command_fn (vlib_main_t *vm, unformat_input_t *input,
 
   while (unformat_check_input (line_input) != UNFORMAT_END_OF_INPUT)
     {
-      if (!unformat (line_input, "%u", &ths))
+      if (unformat (line_input, "%u", &ths))
        break;
       else
 	{
