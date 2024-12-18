@@ -17,6 +17,7 @@
 #include <vppinfra/format.h>
 #include <assert.h>
 
+#include <vnet/calc_latency.h>
 #include <vnet/ethernet/ethernet.h>
 #include <dpdk/buffer.h>
 #include <dpdk/device/dpdk.h>
@@ -146,6 +147,7 @@ dpdk_validate_rte_mbuf (vlib_main_t * vm, vlib_buffer_t * b,
     }
 }
 
+<<<<<<< HEAD
 // load timestamp offset from ./init.c
 extern int tsc_dynfield_offset;
 
@@ -200,6 +202,8 @@ static void calc_latency (vlib_main_t *vm, struct rte_mbuf **pkts,
 }
 /* >8 End of callback addition. */
 
+=======
+>>>>>>> huawei-perf
 /*
  * This function calls the dpdk's tx_burst function to transmit the packets.
  * It manages a lock per-device if the device does not
@@ -231,9 +235,12 @@ tx_burst_vector_internal (vlib_main_t *vm, dpdk_device_t *xd,
       //directly free 
       rte_pktmbuf_free_bulk(mb, n_left);
       n_sent = n_left; 
+<<<<<<< HEAD
 
       // Subsitute the original tx function call with the following line, to bypass tx IO
       calc_latency(vm, mb, n_left, ptd);
+=======
+>>>>>>> huawei-perf
 
       if (is_shared)
 	clib_spinlock_unlock (&txq->lock);
@@ -363,6 +370,12 @@ VNET_DEVICE_CLASS_TX_FN (dpdk_device_class) (vlib_main_t * vm,
   n_left = n_packets;
   mb = ptd->mbufs;
 
+  // get latency statistics counter
+  latency_counter_t *lat_stats = vm->lat_stats;
+  latency_counter_t *total_lat_stats = &(vm->total_lat_stats);
+  // get nano second timestamp
+  u64 now = (u64) (vlib_time_now(vm) * 1e9);
+
 #if (CLIB_N_PREFETCHES >= 8)
   while (n_left >= 8)
     {
@@ -373,10 +386,16 @@ VNET_DEVICE_CLASS_TX_FN (dpdk_device_class) (vlib_main_t * vm,
       dpdk_prefetch_buffer (vm, mb[6]);
       dpdk_prefetch_buffer (vm, mb[7]);
 
+      // -- calc_latency START --
       b[0] = vlib_buffer_from_rte_mbuf (mb[0]);
+      calc_latency(vm, b[0], now, lat_stats, total_lat_stats, vlib_buffer_length_in_chain (vm, b[0]));
       b[1] = vlib_buffer_from_rte_mbuf (mb[1]);
+      calc_latency(vm, b[1], now, lat_stats, total_lat_stats, vlib_buffer_length_in_chain (vm, b[1]));
       b[2] = vlib_buffer_from_rte_mbuf (mb[2]);
+      calc_latency(vm, b[2], now, lat_stats, total_lat_stats, vlib_buffer_length_in_chain (vm, b[2]));
       b[3] = vlib_buffer_from_rte_mbuf (mb[3]);
+      calc_latency(vm, b[3], now, lat_stats, total_lat_stats, vlib_buffer_length_in_chain (vm, b[3]));
+      // -- calc_latency END --
 
       or_flags = b[0]->flags | b[1]->flags | b[2]->flags | b[3]->flags;
 
@@ -432,8 +451,12 @@ VNET_DEVICE_CLASS_TX_FN (dpdk_device_class) (vlib_main_t * vm,
       b3 = vlib_buffer_from_rte_mbuf (mb[3]);
       clib_prefetch_load (b3);
 
+      // -- calc_latency START --
       b[0] = vlib_buffer_from_rte_mbuf (mb[0]);
+      calc_latency(vm, b[0], now, lat_stats, total_lat_stats, vlib_buffer_length_in_chain (vm, b[0]));
       b[1] = vlib_buffer_from_rte_mbuf (mb[1]);
+      calc_latency(vm, b[1], now, lat_stats, total_lat_stats, vlib_buffer_length_in_chain (vm, b[1]));
+      // -- calc_latency END --
 
       or_flags = b[0]->flags | b[1]->flags;
 
@@ -473,6 +496,13 @@ VNET_DEVICE_CLASS_TX_FN (dpdk_device_class) (vlib_main_t * vm,
       b[0] = vlib_buffer_from_rte_mbuf (mb[0]);
 
       dpdk_validate_rte_mbuf (vm, b[0], 1);
+
+      // -- calc_latency START --
+      calc_latency(vm, b[0], now, lat_stats, total_lat_stats, vlib_buffer_length_in_chain (vm, b[0]));
+      // debug latency stats
+      // clib_warning("dpdk-tx device_name[%s] packet size n_bytes: %d, identifier: %d, b->flag: %x", xd->name,  vlib_buffer_length_in_chain(vm, b[0]), ((vnet_buffer_opaque2_t *) (b[0])->opaque2)->protocol_identifier, b[0]->flags);
+      // -- calc_latency END --
+
       dpdk_buffer_tx_offload (xd, b[0], mb[0]);
 
       if (PREDICT_FALSE (node->flags & VLIB_NODE_FLAG_TRACE))

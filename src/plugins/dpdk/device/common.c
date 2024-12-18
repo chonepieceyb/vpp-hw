@@ -30,9 +30,6 @@
 #include <dpdk/device/dpdk_priv.h>
 #include <vppinfra/error.h>
 
-// load timestamp offset from ./init.c
-extern int tsc_dynfield_offset;
-
 /* DPDK TX offload to vnet hw interface caps mapppings */
 static struct
 {

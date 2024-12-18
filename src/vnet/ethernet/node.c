@@ -37,6 +37,9 @@
  *  WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include <vppinfra/byte_order.h>
+#include <vnet/ethernet/packet.h>
+#include <vppinfra/clib.h>
 #include <vlib/vlib.h>
 #include <vnet/pg/pg.h>
 #include <vnet/ethernet/ethernet.h>
@@ -45,6 +48,8 @@
 #include <vppinfra/sparse_vec.h>
 #include <vnet/l2/l2_bvi.h>
 #include <vnet/classify/pcap_classify.h>
+
+#define CALC_LATENCY_ARP_PROTOCOL_IDENTIFIER 5
 
 #define foreach_ethernet_input_next		\
   _ (PUNT, "error-punt")			\
@@ -864,17 +869,33 @@ eth_input_process_frame (vlib_main_t * vm, vlib_node_runtime_t * node,
       vlib_prefetch_buffer_data (pd[0], LOAD);
       eth_input_get_etype_and_tags (b, etype, tag, dmac, 0, dmac_check);
 
+      // -- calc_latency START --
+      // TODO: currentlt set ARP protocol identifier to 5, need change when traffic template change
+      if (PREDICT_FALSE(clib_net_to_host_u16(etype[0]) == ETHERNET_TYPE_ARP)) {
+        ((vnet_buffer_opaque2_t *) b[0]->opaque2)->protocol_identifier = CALC_LATENCY_ARP_PROTOCOL_IDENTIFIER;
+      }
+
       vlib_prefetch_buffer_header (ph[1], LOAD);
       vlib_prefetch_buffer_data (pd[1], LOAD);
       eth_input_get_etype_and_tags (b, etype, tag, dmac, 1, dmac_check);
+      if (PREDICT_FALSE(clib_net_to_host_u16(etype[1]) == ETHERNET_TYPE_ARP)) {
+        ((vnet_buffer_opaque2_t *) b[1]->opaque2)->protocol_identifier = CALC_LATENCY_ARP_PROTOCOL_IDENTIFIER;
+      }
 
       vlib_prefetch_buffer_header (ph[2], LOAD);
       vlib_prefetch_buffer_data (pd[2], LOAD);
       eth_input_get_etype_and_tags (b, etype, tag, dmac, 2, dmac_check);
+      if (PREDICT_FALSE(clib_net_to_host_u16(etype[2]) == ETHERNET_TYPE_ARP)) {
+        ((vnet_buffer_opaque2_t *) b[2]->opaque2)->protocol_identifier = CALC_LATENCY_ARP_PROTOCOL_IDENTIFIER;
+      }
 
       vlib_prefetch_buffer_header (ph[3], LOAD);
       vlib_prefetch_buffer_data (pd[3], LOAD);
       eth_input_get_etype_and_tags (b, etype, tag, dmac, 3, dmac_check);
+      if (PREDICT_FALSE(clib_net_to_host_u16(etype[3]) == ETHERNET_TYPE_ARP)) {
+        ((vnet_buffer_opaque2_t *) b[3]->opaque2)->protocol_identifier = CALC_LATENCY_ARP_PROTOCOL_IDENTIFIER;
+      }
+      // -- calc_latency END --
 
       eth_input_adv_and_flags_x4 (b, main_is_l3);
 
@@ -891,6 +912,23 @@ eth_input_process_frame (vlib_main_t * vm, vlib_node_runtime_t * node,
       eth_input_get_etype_and_tags (b, etype, tag, dmac, 1, dmac_check);
       eth_input_get_etype_and_tags (b, etype, tag, dmac, 2, dmac_check);
       eth_input_get_etype_and_tags (b, etype, tag, dmac, 3, dmac_check);
+
+      // -- calc_latency START --
+      // TODO: currentlt set ARP protocol identifier to 5, need change when traffic template change
+      if (PREDICT_FALSE(clib_net_to_host_u16(etype[0]) == ETHERNET_TYPE_ARP)) {
+        ((vnet_buffer_opaque2_t *) b[0]->opaque2)->protocol_identifier = CALC_LATENCY_ARP_PROTOCOL_IDENTIFIER;
+      }
+      if (PREDICT_FALSE(clib_net_to_host_u16(etype[1]) == ETHERNET_TYPE_ARP)) {
+        ((vnet_buffer_opaque2_t *) b[1]->opaque2)->protocol_identifier = CALC_LATENCY_ARP_PROTOCOL_IDENTIFIER;
+      }
+      if (PREDICT_FALSE(clib_net_to_host_u16(etype[2]) == ETHERNET_TYPE_ARP)) {
+        ((vnet_buffer_opaque2_t *) b[2]->opaque2)->protocol_identifier = CALC_LATENCY_ARP_PROTOCOL_IDENTIFIER;
+      }
+      if (PREDICT_FALSE(clib_net_to_host_u16(etype[3]) == ETHERNET_TYPE_ARP)) {
+        ((vnet_buffer_opaque2_t *) b[3]->opaque2)->protocol_identifier = CALC_LATENCY_ARP_PROTOCOL_IDENTIFIER;
+      }
+      // -- calc_latency END --
+
       eth_input_adv_and_flags_x4 (b, main_is_l3);
 
       /* next */
@@ -904,6 +942,13 @@ eth_input_process_frame (vlib_main_t * vm, vlib_node_runtime_t * node,
     {
       eth_input_get_etype_and_tags (b, etype, tag, dmac, 0, dmac_check);
       eth_input_adv_and_flags_x1 (b, main_is_l3);
+
+      // -- calc_latency START --
+      // TODO: currentlt set ARP protocol identifier to 5, need change when traffic template change
+      if (PREDICT_FALSE(clib_net_to_host_u16(etype[0]) == ETHERNET_TYPE_ARP)) {
+        ((vnet_buffer_opaque2_t *) b[0]->opaque2)->protocol_identifier = CALC_LATENCY_ARP_PROTOCOL_IDENTIFIER;
+      }
+      // -- calc_latency END --
 
       /* next */
       b += 1;
@@ -1263,6 +1308,16 @@ ethernet_input_inline (vlib_main_t * vm,
 	  e1 = vlib_buffer_get_current (b1);
 	  type1 = clib_net_to_host_u16 (e1->type);
 
+	  // -- calc_latency START --
+	  // TODO: currentlt set ARP protocol identifier to 5, need change when traffic template change
+	  if (PREDICT_FALSE(clib_net_to_host_u16(type0) == ETHERNET_TYPE_ARP)) {
+	    ((vnet_buffer_opaque2_t *) b0->opaque2)->protocol_identifier = CALC_LATENCY_ARP_PROTOCOL_IDENTIFIER;
+	  }
+	  if (PREDICT_FALSE(clib_net_to_host_u16(type1) == ETHERNET_TYPE_ARP)) {
+	    ((vnet_buffer_opaque2_t *) b1->opaque2)->protocol_identifier = CALC_LATENCY_ARP_PROTOCOL_IDENTIFIER;
+	  }
+	  // -- calc_latency END --
+
 	  /* Set the L2 header offset for all packets */
 	  vnet_buffer (b0)->l2_hdr_offset = b0->current_data;
 	  vnet_buffer (b1)->l2_hdr_offset = b1->current_data;
@@ -1520,6 +1575,13 @@ ethernet_input_inline (vlib_main_t * vm,
 	  error0 = ETHERNET_ERROR_NONE;
 	  e0 = vlib_buffer_get_current (b0);
 	  type0 = clib_net_to_host_u16 (e0->type);
+
+	  // -- calc_latency START --
+	  // TODO: currentlt set ARP protocol identifier to 5, need change when traffic template change
+	  if (PREDICT_FALSE(clib_net_to_host_u16(type0) == ETHERNET_TYPE_ARP)) {
+	    ((vnet_buffer_opaque2_t *) b0->opaque2)->protocol_identifier = CALC_LATENCY_ARP_PROTOCOL_IDENTIFIER;
+	  }
+	  // -- calc_latency END --
 
 	  /* Set the L2 header offset for all packets */
 	  vnet_buffer (b0)->l2_hdr_offset = b0->current_data;

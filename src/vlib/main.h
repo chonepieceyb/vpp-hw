@@ -51,6 +51,11 @@
 
 #include <pthread.h>
 
+// Timeout packet count thresholder, 1ms
+#define TIME_OUT_THRESHOULDER_NS 1000000
+
+// maxmium number of protocol latency trace count
+#define MAX_LATENCY_TRACE_COUNT 20
 
 /* By default turn off node/error event logging.
    Override with -DVLIB_ELOG_MAIN_LOOP */
@@ -99,6 +104,13 @@ typedef struct vlib_node_runtime_perf_callback_data_t
 
 clib_callback_data_typedef (vlib_node_runtime_perf_callback_set_t,
 			    vlib_node_runtime_perf_callback_data_t);
+
+typedef struct {
+  u64 total_latency; /* Total latency of all packets between in and out vpp */
+  u64 total_pkts; /* Total packets between in and out vpp */
+  u64 timeout_pkts; /* latency greater than TIME_OUT_THRESHOULDER_NS packets count */
+  u64 total_bytes; /* Total throughput in bytes */
+} latency_counter_t;
 
 typedef struct vlib_main_t
 {
@@ -266,7 +278,16 @@ typedef struct vlib_main_t
   void *asan_stack_save;
 #endif
   volatile int barrier_flush;
+<<<<<<< HEAD
   u32 timeout_ths;
+=======
+
+  // latency calculation used temp store 
+  latency_counter_t total_lat_stats;
+  latency_counter_t lat_stats[MAX_LATENCY_TRACE_COUNT];
+  // last time reset latency statistics
+  f64 last_timestamp;
+>>>>>>> huawei-perf
 } vlib_main_t;
 
 typedef struct vlib_global_main_t
