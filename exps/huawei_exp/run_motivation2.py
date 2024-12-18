@@ -179,6 +179,7 @@ if __name__ == '__main__':
     parser.add_argument('-t', '--tun', help='enable tun device to redirect host packet', required=False, action='store_true')
     parser.add_argument('-a', '--acl', help='enable acl rules setting', required=False, action='store_true')
     parser.add_argument('-n', '--nat', help='enable nat rules setting', required=False, action='store_true')
+    parser.add_argument('-D', '--desc', help='the number of rx and tx packet desc num', required=False, type=int, default=1024)
     args = parser.parse_args()
 
     core_list = args.core
@@ -187,7 +188,8 @@ if __name__ == '__main__':
     use_tun = args.tun
     use_acl = args.acl
     use_nat = args.nat
-
+    desc_num = args.desc
+  
     if use_baseline:
         vpp_binary = vpp_binary_origin
         vppctl_binary = vppctl_binary_origin
@@ -223,15 +225,15 @@ if __name__ == '__main__':
     vpp_start_command = f"""sudo {vpp_binary} unix "{{ runtime-dir {VPP_RUNTIME_DIR} cli-listen {SOCKFILE} pidfile {VPP_REMOTE_PIDFILE} }}" \\
                             cpu "{{ main-core {main_core} corelist-workers {worker_core} }}" \\
                             plugins "{{ plugin default {{ enable }} plugin dpdk_plugin.so {{ enable }} plugin crypto_native_plugin.so {{ enable }} plugin crypto_openssl_plugin.so {{enable}} plugin ping_plugin.so {{enable}} plugin pppoe_plugin.so {{enable}} plugin nat_plugin.so {{enable}} plugin perfmon.so {{enable}} plugin dispatcher.so {{enable}} plugin protocol1_plugin.so {{enable}} plugin protocol2_plugin.so {{enable}} plugin protocol3_plugin.so {{enable}} plugin protocol4_plugin.so {{enable}} plugin protocol5_plugin.so {{enable}} plugin protocol6_plugin.so {{enable}} plugin protocol7_plugin.so {{enable}} plugin protocol8_plugin.so {{enable}} plugin protocol9_plugin.so {{enable}} plugin protocol10_plugin.so {{enable}} plugin protocol11_plugin.so {{enable}} plugin protocol12_plugin.so {{enable}} plugin protocol13_plugin.so {{enable}} plugin protocol14_plugin.so {{enable}} plugin protocol15_plugin.so {{enable}} plugin protocol16_plugin.so {{enable}}  }}"  \\
-                            dpdk "{{ dev {pcie_addr[0]} {{ name {Ethernet0} num-tx-queues {queues_count} num-rx-queues {queues_count} }} \\
-                                    dev {pcie_addr[1]} {{ name {Ethernet1} num-tx-queues {queues_count} num-rx-queues {queues_count} }} }}" \\
+                            dpdk "{{ dev {pcie_addr[0]} {{ name {Ethernet0} num-tx-queues {queues_count} num-rx-queues {queues_count} num-rx-desc {desc_num} num-tx-desc {desc_num}}} \\
+                                    dev {pcie_addr[1]} {{ name {Ethernet1} num-tx-queues {queues_count} num-rx-queues {queues_count} num-rx-desc {desc_num} num-tx-desc {desc_num}}} }}" \\
                             buffers "{{default data-size 2048}}" \\
                         """
     vpp_start_command_with_tun = f"""sudo {vpp_binary} unix "{{ runtime-dir {VPP_RUNTIME_DIR} cli-listen {SOCKFILE} pidfile {VPP_REMOTE_PIDFILE} }}" \\
                             cpu "{{ main-core {main_core} corelist-workers {worker_core} }}" \\
                             plugins "{{ plugin default {{ enable }} plugin dpdk_plugin.so {{ enable }} plugin crypto_native_plugin.so {{ enable }} plugin crypto_openssl_plugin.so {{enable}} plugin ping_plugin.so {{enable}} plugin pppoe_plugin.so {{enable}} plugin nat_plugin.so {{enable}} plugin bufmon.so {{enable}}}}"  \\
-                            dpdk "{{ dev {pcie_addr[0]} {{ name {Ethernet0} num-tx-queues {queues_count} num-rx-queues {queues_count} }} \\
-                                    dev {pcie_addr[1]} {{ name {Ethernet1} num-tx-queues {queues_count} num-rx-queues {queues_count} }} }}" \\
+                            dpdk "{{ dev {pcie_addr[0]} {{ name {Ethernet0} num-tx-queues {queues_count} num-rx-queues {queues_count} num-rx-desc {desc_num} num-tx-desc {desc_num} }} \\
+                                    dev {pcie_addr[1]} {{ name {Ethernet1} num-tx-queues {queues_count} num-rx-queues {queues_count} num-rx-desc {desc_num} num-tx-desc {desc_num}}} }}" \\
                             tuntap "{{ enable ethernet name newtap }}"
                         """
     if use_tun:

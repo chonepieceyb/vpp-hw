@@ -11,6 +11,7 @@
 #include <vlib/node_funcs.h>
 #include <vlib/vlib_pf_wait_queue.h>
 #include <vppinfra/tw_timer_template.c>
+#include <vlib/vlib_pf_run_queue.h>
 
 void
 process_expired_pf_cb (u32 *expired_timer_handles)
@@ -31,5 +32,5 @@ process_expired_pf_cb (u32 *expired_timer_handles)
         }
       pf->is_timeout = 1;
     }
-  vec_append (nm->pf_runq, expired_timer_handles);
+  pf_runq_enq_bulk (nm->pf_runq, expired_timer_handles);
 }

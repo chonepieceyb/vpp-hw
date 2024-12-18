@@ -28,6 +28,7 @@
 #include <vlib/stats/stats.h>
 
 #include <vlib/vlib_pf_wait_queue.h>
+#include <vlib/vlib_pf_run_queue.h>
 
 u32
 vl (void *p)
@@ -180,7 +181,7 @@ vlib_thread_init (vlib_main_t * vm)
   vlib_thread_registration_t *tr;
   u32 n_vlib_mains = 1;
   u32 first_index = 1;
-  u32 i;
+  u32 i; 
   uword *avail_cpu;
   u32 stats_num_worker_threads_dir_index;
 
@@ -679,8 +680,9 @@ start_workers (vlib_main_t * vm)
 	      nm_clone->pf_runq = 0;
               pool_alloc(nm_clone->pending_frames, 128);
               pool_validate(nm_clone->pending_frames);
-              vec_validate(nm_clone->pf_runq, 32);
-              vec_set_len(nm_clone->pf_runq, 0);
+        //       vec_validate(nm_clone->pf_runq, 32);
+        //       vec_set_len(nm_clone->pf_runq, 0);
+	      pf_runq_new(nm_clone->pf_runq, 5);
 	      
               nm_clone->pf_waitq = clib_mem_alloc_aligned (sizeof (tw_timer_wheel_pf_waitq_t),
                         CLIB_CACHE_LINE_BYTES);
@@ -688,7 +690,7 @@ start_workers (vlib_main_t * vm)
                 /* Create the pf waiting queue timing wheel */
               tw_timer_wheel_init_pf_waitq(
                   (tw_timer_wheel_pf_waitq_t*) nm_clone->pf_waitq,
-                  process_expired_pf_cb /* callback */, 10e-6 /* timer period 1us */,
+                  process_expired_pf_cb /* callback */, 10e-6 /* timer period 10us */,
                   ~0 /* max expirations per call */);
 
 	      /* fork nodes */

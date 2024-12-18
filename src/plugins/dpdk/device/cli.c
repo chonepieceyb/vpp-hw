@@ -471,8 +471,8 @@ show_packets_latency_fn (vlib_main_t * vm,
   if (total_lat_stats.total_pkts != 0) {
     avg_lat = total_lat_stats.total_latency / total_lat_stats.total_pkts;
   }
-  vlib_cli_output (vm, "avg_throughput(pkt/s): %lu, avg_throughput(bits/s): %lu, avg_lat(ns): %lu, timeout_pkts: %lu, total_pkts: %lu, total_latency: %lu",
-                    avg_throughput_pkts, avg_throughput_bits, avg_lat, total_lat_stats.timeout_pkts, total_lat_stats.total_pkts, total_lat_stats.total_latency);
+  vlib_cli_output (vm, "avg_throughput(pkt/s): %lu, avg_throughput(bits/s): %lu, avg_lat(ns): %lu, timeout_pkts: %f, total_pkts: %lu, total_latency: %lu",
+                    avg_throughput_pkts, avg_throughput_bits, avg_lat, total_lat_stats.timeout_pkts/time_diff_s, total_lat_stats.total_pkts, total_lat_stats.total_latency);
 
   // print each protocol latency
   for(int i = 0; i < MAX_LATENCY_TRACE_COUNT; i++) {
@@ -484,7 +484,7 @@ show_packets_latency_fn (vlib_main_t * vm,
     if (lat_stats[i].total_pkts != 0) {
       avg_lat = lat_stats[i].total_latency / lat_stats[i].total_pkts;
     }
-    vlib_cli_output (vm, "protocol_identifier: %d, avg_throughput(pkt/s): %lu, avg_throughput(bits/s): %lu, avg_lat(ns): %lu, timeout_pkts: %lu, total_pkts: %lu, total_latency: %lu",
+    vlib_cli_output (vm, "protocol_identifier: %d, avg_throughput(pkt/s): %lu, avg_throughput(bits/s): %lu, avg_lat(ns): %lu, timeout_pkts: %f, total_pkts: %lu, total_latency: %lu",
                       i, avg_throughput_pkts, avg_throughput_bits, avg_lat, lat_stats[i].timeout_pkts, lat_stats[i].total_pkts, lat_stats[i].total_latency);
   }
   return 0;

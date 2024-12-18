@@ -4,7 +4,7 @@ CONFIG_FILE="/mnt/disk1/yanghanlin/vpp-hw-rl/motivation_exp_settings.json"
 
 exps_pto_nums = list(range(2,17,2))
 exps_batch_sizes = [64]
-exp_timeouts = [6, 8, 10, 15, 20, 50, 100]
+exp_timeouts = [20, 40, 60, 80, 100, 120, 140, 160, 180, 200]
 
 def __gen_config(config_lines, pto_num, batch_size, timeout):
     exp_config = {}
