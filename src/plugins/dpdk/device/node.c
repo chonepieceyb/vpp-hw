@@ -12,8 +12,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "vppinfra/time.h"
+
 #include <vnet/vnet.h>
+#include <vnet/calc_latency.h>
+#include <vlib/buffer.h>
+#include <vppinfra/time.h>
 #include <vppinfra/vec.h>
 #include <vppinfra/error.h>
 #include <vppinfra/format.h>
@@ -340,29 +343,6 @@ dpdk_process_lro_offload (dpdk_device_t *xd, dpdk_per_thread_data_t *ptd,
     }
 }
 
-// load timestamp offset from ./init.c
-extern int tsc_dynfield_offset;
-
-static_always_inline rte_mbuf_timestamp_t *
-tsc_field (struct rte_mbuf *mbuf, int offset)
-{
-	return RTE_MBUF_DYNFIELD(mbuf,
-			offset, rte_mbuf_timestamp_t *);
-}
-
-/* Callback added to the RX port and applied to packets. 8< */
-static_always_inline uint16_t
-add_timestamps(vlib_main_t * vm, struct rte_mbuf **pkts, uint16_t nb_pkts) {
-  unsigned i;
-  // get nano second now timestamp
-  uint64_t now = (uint64_t) (vlib_time_now(vm) * 1e9);
-  for (i = 0; i < nb_pkts; i++) {
-    *tsc_field(pkts[i], tsc_dynfield_offset) = now;
-  }
-  return nb_pkts;
-}
-/* >8 End of callback addition and application. */
-
 static_always_inline u32
 dpdk_device_input (vlib_main_t * vm, dpdk_main_t * dm, dpdk_device_t * xd,
 		   vlib_node_runtime_t * node, u32 thread_index, u16 queue_id)
@@ -421,8 +401,15 @@ dpdk_device_input (vlib_main_t * vm, dpdk_main_t * dm, dpdk_device_t * xd,
   if (n_rx_packets == 0)
     return 0;
 
+  // -- calc_latency START --
+  // get nano second now timestamp
+  u64 now = (u64) (vlib_time_now(vm) * 1e9);
   // add timestamp on each received packets
-  add_timestamps(vm, ptd->mbufs, n_rx_packets);
+  for (n = 0; n < n_rx_packets; n++) {
+    vlib_buffer_t *pkt = vlib_buffer_from_rte_mbuf (ptd->mbufs[n]);
+    add_timestamps(vm, pkt, now);
+  }
+  // -- calc_latency END --
 
   /* Update buffer template */
   vnet_buffer (bt)->sw_if_index[VLIB_RX] = xd->sw_if_index;

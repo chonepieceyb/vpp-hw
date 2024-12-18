@@ -48,8 +48,6 @@
 
 dpdk_main_t dpdk_main;
 dpdk_config_main_t dpdk_config_main;
-// store the dynfield offset for timestamp record
-int tsc_dynfield_offset;
 
 #define LINK_STATE_ELOGS	0
 
@@ -289,18 +287,6 @@ dpdk_lib_init (dpdk_main_t * dm)
 			 port_id, di.driver_name);
 	  continue;
 	}
-
-        /* setup dyn filed in mbuf used for timestamp record */
-	static const struct rte_mbuf_dynfield tsc_dynfield_desc = {
-		.name = "timestamp_dynfield",
-		.size = sizeof(uint64_t),
-		.align = _Alignof(uint64_t),
-	};
-
-	tsc_dynfield_offset = rte_mbuf_dynfield_register(&tsc_dynfield_desc);
-        dpdk_log_debug("tsc_dynfield_offset: %d init at dpdk_lib_init", tsc_dynfield_offset);
-	if (tsc_dynfield_offset < 0)
-		rte_exit(EXIT_FAILURE, "Cannot register mbuf field\n");
 
       devconf = dpdk_find_startup_config (&di);
 
