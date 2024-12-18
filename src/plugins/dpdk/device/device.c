@@ -147,63 +147,6 @@ dpdk_validate_rte_mbuf (vlib_main_t * vm, vlib_buffer_t * b,
     }
 }
 
-<<<<<<< HEAD
-// load timestamp offset from ./init.c
-extern int tsc_dynfield_offset;
-
-static_always_inline rte_mbuf_timestamp_t *
-tsc_field (struct rte_mbuf *mbuf, int offset)
-{
-	return RTE_MBUF_DYNFIELD(mbuf,
-			offset, rte_mbuf_timestamp_t *);
-}
-
-/* Callback is added to the TX port. 8< */
-static void calc_latency (vlib_main_t *vm, struct rte_mbuf **pkts,
-                               uint16_t nb_pkts, dpdk_per_thread_data_t *ptd) {
-  if (PREDICT_FALSE(vm->barrier_flush))
-    return;
-  // get nano second now timestamp
-  uint64_t now = (uint64_t) (vlib_time_now(vlib_get_main()) * 1e9);
-  struct dpdk_lat_t *lat_stats = ptd->lat_stats;
-  unsigned i;
-  for (i = 0; i < nb_pkts; i++) {
-    uint64_t packet_ts = *tsc_field(pkts[i], tsc_dynfield_offset);
-    uint64_t packet_latency = now - packet_ts;
-    dpdk_log_debug("now: %lu, packet_ts: %lu, packet_latency: %lu, offset: %d", now, packet_ts, packet_latency, tsc_dynfield_offset);
-    vlib_buffer_t *pkt_vlib_buf = vlib_buffer_from_rte_mbuf(pkts[i]);
-
-    // get packet length in byte
-    uint64_t packet_length = vlib_buffer_length_in_chain(vm, pkt_vlib_buf);
-
-    // get protocal_identifier from packet opaque2 field which is set in the ip4-input and ip6-input node
-    uint64_t protocal_identifier = ((vnet_buffer_opaque2_t *) (pkt_vlib_buf)->opaque2)->protocal_identifier;
-
-    // If the protocal_identifier is greater than MAX_LATENCY_TRACE_COUNT, it is considered as invalid.
-    if (unlikely(protocal_identifier >= MAX_LATENCY_TRACE_COUNT)) {
-        dpdk_log_err("protocal_identifier: %d is greater than MAX_LATENCY_TRACE_COUNT", protocal_identifier);
-        continue;
-    }
-
-    // If the packet_latency is greater than the TIME_OUT_THRESHOULDER_NS, it is considered as timeout.
-    if (packet_latency > TIME_OUT_THRESHOULDER_NS) {
-      lat_stats[protocal_identifier].timeout_pkts++;
-    }
-
-    // Update the latency statistics, actually total_latency store the latency time(ns)
-    lat_stats[protocal_identifier].total_pkts++;
-    lat_stats[protocal_identifier].total_latency += packet_latency;
-    lat_stats[protocal_identifier].total_bytes += packet_length;
-    ptd->total_lat_stats.total_latency += packet_latency;
-    ptd->total_lat_stats.total_bytes += packet_length;
-  }
-  ptd->total_lat_stats.total_pkts += nb_pkts;
-  return;
-}
-/* >8 End of callback addition. */
-
-=======
->>>>>>> huawei-perf
 /*
  * This function calls the dpdk's tx_burst function to transmit the packets.
  * It manages a lock per-device if the device does not
@@ -235,12 +178,6 @@ tx_burst_vector_internal (vlib_main_t *vm, dpdk_device_t *xd,
       //directly free 
       rte_pktmbuf_free_bulk(mb, n_left);
       n_sent = n_left; 
-<<<<<<< HEAD
-
-      // Subsitute the original tx function call with the following line, to bypass tx IO
-      calc_latency(vm, mb, n_left, ptd);
-=======
->>>>>>> huawei-perf
 
       if (is_shared)
 	clib_spinlock_unlock (&txq->lock);

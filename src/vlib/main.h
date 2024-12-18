@@ -278,16 +278,13 @@ typedef struct vlib_main_t
   void *asan_stack_save;
 #endif
   volatile int barrier_flush;
-<<<<<<< HEAD
-  u32 timeout_ths;
-=======
 
+  u32 timeout_ths;
   // latency calculation used temp store 
   latency_counter_t total_lat_stats;
   latency_counter_t lat_stats[MAX_LATENCY_TRACE_COUNT];
   // last time reset latency statistics
   f64 last_timestamp;
->>>>>>> huawei-perf
 } vlib_main_t;
 
 typedef struct vlib_global_main_t
