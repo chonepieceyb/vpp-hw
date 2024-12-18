@@ -280,6 +280,7 @@ typedef struct vlib_main_t
   volatile int barrier_flush;
 
   u32 timeout_ths;
+
   // latency calculation used temp store 
   latency_counter_t total_lat_stats;
   latency_counter_t lat_stats[MAX_LATENCY_TRACE_COUNT];

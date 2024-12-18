@@ -159,9 +159,6 @@ tx_burst_vector_internal (vlib_main_t *vm, dpdk_device_t *xd,
 			  u8 is_shared)
 {
   dpdk_tx_queue_t *txq;
-  dpdk_main_t *dm = &dpdk_main;
-  dpdk_per_thread_data_t *ptd = vec_elt_at_index (dm->per_thread_data,
-						  vm->thread_index);
   u32 n_retry;
   int n_sent = 0;
 
