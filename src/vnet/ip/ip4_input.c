@@ -231,11 +231,13 @@ ip4_input_inline (vlib_main_t * vm,
 
       ip4_input_check_x4 (vm, error_node, b, ip, next, verify_checksum);
 
+      // -- calc_latency START --
       // add the tos value to the opaque2->protocal_identifier field
-      ((vnet_buffer_opaque2_t *) (b[0])->opaque2)->protocal_identifier = ip[0]->tos >> 2;
-      ((vnet_buffer_opaque2_t *) (b[1])->opaque2)->protocal_identifier = ip[1]->tos >> 2;
-      ((vnet_buffer_opaque2_t *) (b[2])->opaque2)->protocal_identifier = ip[2]->tos >> 2;
-      ((vnet_buffer_opaque2_t *) (b[3])->opaque2)->protocal_identifier = ip[3]->tos >> 2;
+      ((vnet_buffer_opaque2_t *) (b[0])->opaque2)->protocol_identifier = ip[0]->tos >> 2;
+      ((vnet_buffer_opaque2_t *) (b[1])->opaque2)->protocol_identifier = ip[1]->tos >> 2;
+      ((vnet_buffer_opaque2_t *) (b[2])->opaque2)->protocol_identifier = ip[2]->tos >> 2;
+      ((vnet_buffer_opaque2_t *) (b[3])->opaque2)->protocol_identifier = ip[3]->tos >> 2;
+      // -- calc_latency END --
 
       /* next */
       b += 4;
@@ -327,7 +329,7 @@ ip4_input_inline (vlib_main_t * vm,
       next[0] = next0;
 
       // add the tos value to the opaque2->protocal_identifier field
-      ((vnet_buffer_opaque2_t *) (b[0])->opaque2)->protocal_identifier = ip[0]->tos >> 2;
+      ((vnet_buffer_opaque2_t *) (b[0])->opaque2)->protocol_identifier = ip[0]->tos >> 2;
 
       /* next */
       b += 1;

@@ -17,6 +17,7 @@
 
 #include <vlib/vlib.h>
 #include <vppinfra/vector/count_equal.h>
+#include <vnet/calc_latency.h>
 
 typedef enum
 {
@@ -168,6 +169,11 @@ process_drop_punt (vlib_main_t * vm,
   u32 errors[VLIB_FRAME_SIZE], *error, *from, n_left;
   vlib_buffer_t *bufs[VLIB_FRAME_SIZE], **b;
   vlib_error_main_t *em = &vm->error_main;
+  // get latency statistics counter
+  latency_counter_t *lat_stats = vm->lat_stats;
+  latency_counter_t *total_lat_stats = &(vm->total_lat_stats);
+  // get nano second now timestamp
+  u64 now = (u64) (vlib_time_now(vm) * 1e9);
 
   from = vlib_frame_vector_args (frame);
   n_left = frame->n_vectors;
@@ -190,10 +196,19 @@ process_drop_punt (vlib_main_t * vm,
 	  vlib_prefetch_buffer_header (b[6], LOAD);
 	  vlib_prefetch_buffer_header (b[7], LOAD);
 	}
+
+      // -- calc_latency START --
+      // TODO: for ARP and IGMPv2 packets, vlib_buffer_length_in_chain() will get the wrong length
+      // which packet actually is 62 bytes, but the function will return 48 bytes, lack of 14 bytes (Ethernet header)
       error[0] = b[0]->error;
+      calc_latency(vm, b[0], now, lat_stats, total_lat_stats, vlib_buffer_length_in_chain(vm, b[0]));
       error[1] = b[1]->error;
+      calc_latency(vm, b[1], now, lat_stats, total_lat_stats, vlib_buffer_length_in_chain(vm, b[1]));
       error[2] = b[2]->error;
+      calc_latency(vm, b[2], now, lat_stats, total_lat_stats, vlib_buffer_length_in_chain(vm, b[2]));
       error[3] = b[3]->error;
+      calc_latency(vm, b[3], now, lat_stats, total_lat_stats, vlib_buffer_length_in_chain(vm, b[3]));
+      // -- calc_latency END --
 
       error += 4;
       n_left -= 4;
@@ -203,6 +218,11 @@ process_drop_punt (vlib_main_t * vm,
     {
       error[0] = b[0]->error;
 
+      // -- calc_latency START --
+      calc_latency(vm, b[0], now, lat_stats, total_lat_stats, vlib_buffer_length_in_chain(vm, b[0]));
+      // debug latency stats
+      // clib_warning("error-drop packet size n_bytes: %d, identifier: %d, b->flag: %x", vlib_buffer_length_in_chain(vm, b[0]), ((vnet_buffer_opaque2_t *) (b[0])->opaque2)->protocol_identifier, b[0]->flags);
+      // -- calc_latency END --
       error += 1;
       n_left -= 1;
       b += 1;

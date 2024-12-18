@@ -132,9 +132,11 @@ VLIB_NODE_FN (ip6_input_node) (vlib_main_t * vm, vlib_node_runtime_t * node,
 	  ip0 = vlib_buffer_get_current (p0);
 	  ip1 = vlib_buffer_get_current (p1);
 
+	  // -- calc_latency START --
 	  // add the tc value to the opaque2->protocal_identifier field
-	  ((vnet_buffer_opaque2_t *) (p0)->opaque2)->protocal_identifier = ip6_dscp_network_order(ip0);
-	  ((vnet_buffer_opaque2_t *) (p1)->opaque2)->protocal_identifier = ip6_dscp_network_order(ip1);
+	  ((vnet_buffer_opaque2_t *) (p0)->opaque2)->protocol_identifier = ip6_dscp_network_order(ip0);
+	  ((vnet_buffer_opaque2_t *) (p1)->opaque2)->protocol_identifier = ip6_dscp_network_order(ip1);
+	  // -- calc_latency END --
 
 	  sw_if_index0 = vnet_buffer (p0)->sw_if_index[VLIB_RX];
 	  sw_if_index1 = vnet_buffer (p1)->sw_if_index[VLIB_RX];
@@ -195,7 +197,7 @@ VLIB_NODE_FN (ip6_input_node) (vlib_main_t * vm, vlib_node_runtime_t * node,
 	  ip0 = vlib_buffer_get_current (p0);
 
 	  // add the tc value to the opaque2->protocal_identifier field
-	  ((vnet_buffer_opaque2_t *) (p0)->opaque2)->protocal_identifier = ip6_dscp_network_order(ip0);
+	  ((vnet_buffer_opaque2_t *) (p0)->opaque2)->protocol_identifier = ip6_dscp_network_order(ip0);
 
 	  sw_if_index0 = vnet_buffer (p0)->sw_if_index[VLIB_RX];
 	  if (PREDICT_FALSE (ip6_address_is_multicast (&ip0->dst_address)))

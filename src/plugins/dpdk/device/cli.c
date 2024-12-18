@@ -13,11 +13,11 @@
  * limitations under the License.
  */
 
-#include "vppinfra/clib.h"
 #include <unistd.h>
 #include <fcntl.h>
 
 #include <vnet/vnet.h>
+#include <vppinfra/clib.h>
 #include <vppinfra/vec.h>
 #include <vppinfra/error.h>
 #include <vppinfra/format.h>
@@ -382,29 +382,38 @@ reset_packets_latency_fn (vlib_main_t * vm,
 			      unformat_input_t * input,
 			      vlib_cli_command_t * cmd)
 {
-  dpdk_main_t *dm = &dpdk_main;
-  dpdk_device_t *xd = dm->devices;
-  dpdk_per_thread_data_t *ptd; 
+  vlib_thread_main_t *tm = vlib_get_thread_main();
+
+  // set timestamp for duration counting
+  f64 now = vlib_time_now(vm);
+  f64 last_timestamp = vm->last_timestamp;
+  f64 time_diff_s = now - last_timestamp;
   u32 i;
-  
+
   vlib_worker_thread_barrier_sync (vm);
-  /* reset perthread data_t */
-  vec_foreach (ptd, dm->per_thread_data)
-  {
-    ptd->total_lat_stats.total_latency = 0;
-    ptd->total_lat_stats.total_pkts = 0;
-    ptd->total_lat_stats.timeout_pkts = 0;
-    ptd->total_lat_stats.total_bytes = 0;
-    for(i = 0; i < MAX_LATENCY_TRACE_COUNT; i++) {
-      ptd->lat_stats[i].total_latency = 0;
-      ptd->lat_stats[i].total_pkts = 0;
-      ptd->lat_stats[i].timeout_pkts = 0;
-      ptd->lat_stats[i].total_bytes = 0;
+  for (i = 0; i < tm->n_vlib_mains; i++) {
+    vlib_main_t *curr_vm = vlib_get_main_by_index(i);
+    // get latency statistics counter
+    latency_counter_t *lat_stats_ptr = curr_vm->lat_stats;
+    latency_counter_t *total_lat_stats_ptr = &(curr_vm->total_lat_stats);
+    // reset the statistics
+    total_lat_stats_ptr->total_latency = 0;
+    total_lat_stats_ptr->total_pkts = 0;
+    total_lat_stats_ptr->timeout_pkts = 0;
+    total_lat_stats_ptr->total_bytes = 0;
+    for (int i = 1; i < MAX_LATENCY_TRACE_COUNT; i++) {
+      // reset the statistics
+      lat_stats_ptr[i].total_latency = 0;
+      lat_stats_ptr[i].total_pkts = 0;
+      lat_stats_ptr[i].timeout_pkts = 0;
+      lat_stats_ptr[i].total_bytes = 0;
     }
   }
+  // set timestamp for duration counting
+  vm->last_timestamp = vlib_time_now(vm);
   vlib_worker_thread_barrier_release (vm);
-  dm->last_timestamp = vlib_time_now(vm);
-  vlib_cli_output(vm, "device: %s latancy statistics has been reset", xd->name);
+  vlib_cli_output(vm, "current time_diff(s): %.2lf", time_diff_s);
+
   return 0;
 }
 
@@ -432,34 +441,37 @@ show_packets_latency_fn (vlib_main_t * vm,
 			      unformat_input_t * input,
 			      vlib_cli_command_t * cmd)
 {
-  dpdk_main_t *dm = &dpdk_main;
-  dpdk_per_thread_data_t *ptd; 
+  vlib_thread_main_t *tm = vlib_get_thread_main();
 
-  /*aggregation*/
-  struct dpdk_lat_t total_lat_stats = {0};
-  struct dpdk_lat_t lat_stats[MAX_LATENCY_TRACE_COUNT] = {0};
+  // set timestamp for duration counting
   f64 now = vlib_time_now(vm);
-  f64 last_timestamp = dm->last_timestamp;
+  f64 last_timestamp = vm->last_timestamp;
   f64 time_diff_s = now - last_timestamp;
   u32 i;
+  // aggregation
+  latency_counter_t total_lat_stats = {0};
+  latency_counter_t lat_stats[MAX_LATENCY_TRACE_COUNT] = {0};
 
   vlib_worker_thread_barrier_sync (vm);
-  vec_foreach (ptd, dm->per_thread_data)
-  {
-    total_lat_stats.total_latency += ptd->total_lat_stats.total_latency;
-    total_lat_stats.total_pkts += ptd->total_lat_stats.total_pkts;
-    total_lat_stats.timeout_pkts += ptd->total_lat_stats.timeout_pkts;
-    total_lat_stats.total_bytes += ptd->total_lat_stats.total_bytes;
-    for(i = 0; i < MAX_LATENCY_TRACE_COUNT; i++) {
-      lat_stats[i].total_latency += ptd->lat_stats[i].total_latency;
-      lat_stats[i].total_pkts += ptd->lat_stats[i].total_pkts;
-      lat_stats[i].timeout_pkts += ptd->lat_stats[i].timeout_pkts;
-      lat_stats[i].total_bytes += ptd->lat_stats[i].total_bytes;
+  for (i = 0; i < tm->n_vlib_mains; i++) {
+    vlib_main_t *curr_vm = vlib_get_main_by_index(i);
+    // get latency statistics counter
+    latency_counter_t *lat_stats_ptr = curr_vm->lat_stats;
+    latency_counter_t *total_lat_stats_ptr = &(curr_vm->total_lat_stats);
+    total_lat_stats.total_latency += total_lat_stats_ptr->total_latency;
+    total_lat_stats.total_pkts += total_lat_stats_ptr->total_pkts;
+    total_lat_stats.timeout_pkts += total_lat_stats_ptr->timeout_pkts;
+    total_lat_stats.total_bytes += total_lat_stats_ptr->total_bytes;
+    for (int i = 1; i < MAX_LATENCY_TRACE_COUNT; i++) {
+      lat_stats[i].total_latency += lat_stats_ptr[i].total_latency;
+      lat_stats[i].total_pkts += lat_stats_ptr[i].total_pkts;
+      lat_stats[i].timeout_pkts += lat_stats_ptr[i].timeout_pkts;
+      lat_stats[i].total_bytes += lat_stats_ptr[i].total_bytes;
     }
   }
+  // set timestamp for duration counting
+  vm->last_timestamp = vlib_time_now(vm);
   vlib_worker_thread_barrier_release (vm);
-  dm->last_timestamp += (vlib_time_now(vm) - now);   //sub time waiting for barrier
- 
   vlib_cli_output(vm, "current time_diff(s): %.2lf", time_diff_s);
 
   // print total latency
@@ -475,7 +487,7 @@ show_packets_latency_fn (vlib_main_t * vm,
                     avg_throughput_pkts, avg_throughput_bits, avg_lat, total_lat_stats.timeout_pkts, total_lat_stats.total_pkts, total_lat_stats.total_latency);
 
   // print each protocol latency
-  for(int i = 0; i < MAX_LATENCY_TRACE_COUNT; i++) {
+  for(int i = 1; i < MAX_LATENCY_TRACE_COUNT; i++) {
     u64 avg_lat = 0;
     u64 avg_throughput_pkts = (u64) ((lat_stats[i].total_pkts) / time_diff_s);
     u64 avg_throughput_bytes = (u64) ((lat_stats[i].total_bytes) / time_diff_s);
@@ -508,45 +520,53 @@ VLIB_CLI_COMMAND (show_packets_latency, static) = {
 };
 /* *INDENT-ON* */
 
-static_always_inline void __show_packets_latency_and_reset(vlib_main_t *vm, dpdk_main_t *dm) {
-  dpdk_per_thread_data_t *ptd; 
-  struct dpdk_lat_t total_lat_stats = {0};
-  struct dpdk_lat_t lat_stats[MAX_LATENCY_TRACE_COUNT] = {0};
+// print raw data, and reset the statistics stored in the device
+static clib_error_t *
+show_packets_latency_and_reset_fn (vlib_main_t * vm,
+			      unformat_input_t * input,
+			      vlib_cli_command_t * cmd)
+{
+  vlib_thread_main_t *tm = vlib_get_thread_main ();
+
+  // set timestamp for duration counting
   f64 now = vlib_time_now(vm);
-  f64 last_timestamp = dm->last_timestamp;
+  f64 last_timestamp = vm->last_timestamp;
   f64 time_diff_s = now - last_timestamp;
   u32 i;
-  vlib_worker_thread_barrier_sync (vm);
-  vec_foreach (ptd, dm->per_thread_data)
-  {
-    total_lat_stats.total_latency += ptd->total_lat_stats.total_latency;
-    total_lat_stats.total_pkts += ptd->total_lat_stats.total_pkts;
-    total_lat_stats.timeout_pkts += ptd->total_lat_stats.timeout_pkts;
-    total_lat_stats.total_bytes += ptd->total_lat_stats.total_bytes;
-    for(i = 0; i < MAX_LATENCY_TRACE_COUNT; i++) {
-      lat_stats[i].total_latency += ptd->lat_stats[i].total_latency;
-      lat_stats[i].total_pkts += ptd->lat_stats[i].total_pkts;
-      lat_stats[i].timeout_pkts += ptd->lat_stats[i].timeout_pkts;
-      lat_stats[i].total_bytes += ptd->lat_stats[i].total_bytes;
-    }
-  }
-  /* reset perthread data_t */
-  vec_foreach (ptd, dm->per_thread_data)
-  {
-    ptd->total_lat_stats.total_latency = 0;
-    ptd->total_lat_stats.total_pkts = 0;
-    ptd->total_lat_stats.timeout_pkts = 0;
-    ptd->total_lat_stats.total_bytes = 0;
-    for(i = 0; i < MAX_LATENCY_TRACE_COUNT; i++) {
-      ptd->lat_stats[i].total_latency = 0;
-      ptd->lat_stats[i].total_pkts = 0;
-      ptd->lat_stats[i].timeout_pkts = 0;
-      ptd->lat_stats[i].total_bytes = 0;
-    }
-  }
-  vlib_worker_thread_barrier_release (vm);
-  dm->last_timestamp = now;
+  // aggregation
+  latency_counter_t total_lat_stats = {0};
+  latency_counter_t lat_stats[MAX_LATENCY_TRACE_COUNT] = {0};
 
+  vlib_worker_thread_barrier_sync (vm);
+  for (i = 0; i < tm->n_vlib_mains; i++) {
+    vlib_main_t *curr_vm = vlib_get_main_by_index(i);
+    // get latency statistics counter
+    latency_counter_t *lat_stats_ptr = curr_vm->lat_stats;
+    latency_counter_t *total_lat_stats_ptr = &(curr_vm->total_lat_stats);
+    total_lat_stats.total_latency += total_lat_stats_ptr->total_latency;
+    total_lat_stats.total_pkts += total_lat_stats_ptr->total_pkts;
+    total_lat_stats.timeout_pkts += total_lat_stats_ptr->timeout_pkts;
+    total_lat_stats.total_bytes += total_lat_stats_ptr->total_bytes;
+    // reset the statistics
+    total_lat_stats_ptr->total_latency = 0;
+    total_lat_stats_ptr->total_pkts = 0;
+    total_lat_stats_ptr->timeout_pkts = 0;
+    total_lat_stats_ptr->total_bytes = 0;
+    for (int i = 1; i < MAX_LATENCY_TRACE_COUNT; i++) {
+      lat_stats[i].total_latency += lat_stats_ptr[i].total_latency;
+      lat_stats[i].total_pkts += lat_stats_ptr[i].total_pkts;
+      lat_stats[i].timeout_pkts += lat_stats_ptr[i].timeout_pkts;
+      lat_stats[i].total_bytes += lat_stats_ptr[i].total_bytes;
+      // reset the statistics
+      lat_stats_ptr[i].total_latency = 0;
+      lat_stats_ptr[i].total_pkts = 0;
+      lat_stats_ptr[i].timeout_pkts = 0;
+      lat_stats_ptr[i].total_bytes = 0;
+    }
+  }
+  // set timestamp for duration counting
+  vm->last_timestamp = vlib_time_now(vm);
+  vlib_worker_thread_barrier_release (vm);
   vlib_cli_output(vm, "current time_diff(s): %.2lf", time_diff_s);
 
   // print total latency
@@ -562,7 +582,7 @@ static_always_inline void __show_packets_latency_and_reset(vlib_main_t *vm, dpdk
                     avg_throughput_pkts, avg_throughput_bits, avg_lat, total_lat_stats.timeout_pkts, total_lat_stats.total_pkts, total_lat_stats.total_latency);
 
   // print each protocol latency
-  for(int i = 0; i < MAX_LATENCY_TRACE_COUNT; i++) {
+  for(int i = 1; i < MAX_LATENCY_TRACE_COUNT; i++) {
     u64 avg_lat = 0;
     u64 avg_throughput_pkts = (u64) ((lat_stats[i].total_pkts) / time_diff_s);
     u64 avg_throughput_bytes = (u64) ((lat_stats[i].total_bytes) / time_diff_s);
@@ -574,63 +594,6 @@ static_always_inline void __show_packets_latency_and_reset(vlib_main_t *vm, dpdk
     vlib_cli_output (vm, "protocol_identifier: %d, avg_throughput(pkt/s): %lu, avg_throughput(bits/s): %lu, avg_lat(ns): %lu, timeout_pkts: %lu, total_pkts: %lu, total_latency: %lu",
                       i, avg_throughput_pkts, avg_throughput_bits, avg_lat, lat_stats[i].timeout_pkts, lat_stats[i].total_pkts, lat_stats[i].total_latency);
   }
-}
-
-// print raw data, and reset the statistics stored in the device
-static clib_error_t *
-show_packets_latency_and_reset_fn (vlib_main_t * vm,
-			      unformat_input_t * input,
-			      vlib_cli_command_t * cmd)
-{
-  
-  dpdk_main_t *dm = &dpdk_main;
-//   dpdk_per_thread_data_t *ptd; 
-//   f64 wait_time; 
-//   u32 count;
-//   clib_error_t *error = NULL;
-//   u32 c;
-//   u32 i;
-//   unformat_input_t _line_input, *line_input = &_line_input;
-//   if (!unformat_user (input, unformat_line_input, line_input))
-//     return 0;
-
-//   while (unformat_check_input (line_input) != UNFORMAT_END_OF_INPUT)
-//     {
-//       if (unformat (line_input, "time %f", &wait_time))
-// 	;
-//       else if (unformat (line_input, "count %u", &count))
-//         ; 
-//       else
-// 	{
-// 	  error = clib_error_return (0, "parse error: '%U'",
-// 				     format_unformat_error, line_input);
-// 	  return error;
-// 	}
-//     }
-  
-//   vlib_worker_thread_barrier_sync (vm);
-//   /* reset perthread data_t */
-//   vec_foreach (ptd, dm->per_thread_data)
-//   {
-//     ptd->total_lat_stats.total_latency = 0;
-//     ptd->total_lat_stats.total_pkts = 0;
-//     ptd->total_lat_stats.timeout_pkts = 0;
-//     ptd->total_lat_stats.total_bytes = 0;
-//     for(i = 0; i < MAX_LATENCY_TRACE_COUNT; i++) {
-//       ptd->lat_stats[i].total_latency = 0;
-//       ptd->lat_stats[i].total_pkts = 0;
-//       ptd->lat_stats[i].timeout_pkts = 0;
-//       ptd->lat_stats[i].total_bytes = 0;
-//     }
-//   }
-//   vlib_worker_thread_barrier_release (vm);
-//   dm->last_timestamp = vlib_time_now(vm);
-
-//   for (c = 0; c < count; c++) {
-//     vlib_process_wait_for_event_or_clock (vm, wait_time);
-//     __show_packets_latency_and_reset(vm, dm);
-//   }
-  __show_packets_latency_and_reset(vm, dm);
   return 0;
 }
 

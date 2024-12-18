@@ -17,6 +17,7 @@
 #include <vppinfra/format.h>
 #include <assert.h>
 
+#include <vnet/calc_latency.h>
 #include <vnet/ethernet/ethernet.h>
 #include <dpdk/buffer.h>
 #include <dpdk/device/dpdk.h>
@@ -146,60 +147,6 @@ dpdk_validate_rte_mbuf (vlib_main_t * vm, vlib_buffer_t * b,
     }
 }
 
-// load timestamp offset from ./init.c
-extern int tsc_dynfield_offset;
-
-static_always_inline rte_mbuf_timestamp_t *
-tsc_field (struct rte_mbuf *mbuf, int offset)
-{
-	return RTE_MBUF_DYNFIELD(mbuf,
-			offset, rte_mbuf_timestamp_t *);
-}
-
-/* Callback is added to the TX port. 8< */
-static void calc_latency (vlib_main_t *vm, struct rte_mbuf **pkts,
-                               uint16_t nb_pkts, dpdk_per_thread_data_t *ptd) {
-  if (PREDICT_FALSE(vm->barrier_flush))
-    return;
-  // get nano second now timestamp
-  uint64_t now = (uint64_t) (vlib_time_now(vlib_get_main()) * 1e9);
-  struct dpdk_lat_t *lat_stats = ptd->lat_stats;
-  unsigned i;
-  for (i = 0; i < nb_pkts; i++) {
-    uint64_t packet_ts = *tsc_field(pkts[i], tsc_dynfield_offset);
-    uint64_t packet_latency = now - packet_ts;
-    dpdk_log_debug("now: %lu, packet_ts: %lu, packet_latency: %lu, offset: %d", now, packet_ts, packet_latency, tsc_dynfield_offset);
-    vlib_buffer_t *pkt_vlib_buf = vlib_buffer_from_rte_mbuf(pkts[i]);
-
-    // get packet length in byte
-    uint64_t packet_length = vlib_buffer_length_in_chain(vm, pkt_vlib_buf);
-
-    // get protocal_identifier from packet opaque2 field which is set in the ip4-input and ip6-input node
-    uint64_t protocal_identifier = ((vnet_buffer_opaque2_t *) (pkt_vlib_buf)->opaque2)->protocal_identifier;
-
-    // If the protocal_identifier is greater than MAX_LATENCY_TRACE_COUNT, it is considered as invalid.
-    if (unlikely(protocal_identifier >= MAX_LATENCY_TRACE_COUNT)) {
-        dpdk_log_err("protocal_identifier: %d is greater than MAX_LATENCY_TRACE_COUNT", protocal_identifier);
-        continue;
-    }
-
-    // If the packet_latency is greater than the TIME_OUT_THRESHOULDER_NS, it is considered as timeout.
-    if (packet_latency > TIME_OUT_THRESHOULDER_NS) {
-      lat_stats[protocal_identifier].timeout_pkts++;
-    }
-
-    // Update the latency statistics, actually total_latency store the latency time(ns)
-    lat_stats[protocal_identifier].total_pkts++;
-    lat_stats[protocal_identifier].total_latency += packet_latency;
-    lat_stats[protocal_identifier].total_bytes += packet_length;
-    ptd->total_lat_stats.total_latency += packet_latency;
-    ptd->total_lat_stats.total_bytes += packet_length;
-  }
-  ptd->total_lat_stats.total_pkts += nb_pkts;
-  return;
-}
-/* >8 End of callback addition. */
-
 /*
  * This function calls the dpdk's tx_burst function to transmit the packets.
  * It manages a lock per-device if the device does not
@@ -212,9 +159,6 @@ tx_burst_vector_internal (vlib_main_t *vm, dpdk_device_t *xd,
 			  u8 is_shared)
 {
   dpdk_tx_queue_t *txq;
-  dpdk_main_t *dm = &dpdk_main;
-  dpdk_per_thread_data_t *ptd = vec_elt_at_index (dm->per_thread_data,
-						  vm->thread_index);
   u32 n_retry;
   int n_sent = 0;
 
@@ -231,9 +175,6 @@ tx_burst_vector_internal (vlib_main_t *vm, dpdk_device_t *xd,
       //directly free 
       rte_pktmbuf_free_bulk(mb, n_left);
       n_sent = n_left; 
-
-      // Subsitute the original tx function call with the following line, to bypass tx IO
-      calc_latency(vm, mb, n_left, ptd);
 
       if (is_shared)
 	clib_spinlock_unlock (&txq->lock);
@@ -363,6 +304,12 @@ VNET_DEVICE_CLASS_TX_FN (dpdk_device_class) (vlib_main_t * vm,
   n_left = n_packets;
   mb = ptd->mbufs;
 
+  // get latency statistics counter
+  latency_counter_t *lat_stats = vm->lat_stats;
+  latency_counter_t *total_lat_stats = &(vm->total_lat_stats);
+  // get nano second timestamp
+  u64 now = (u64) (vlib_time_now(vm) * 1e9);
+
 #if (CLIB_N_PREFETCHES >= 8)
   while (n_left >= 8)
     {
@@ -373,10 +320,16 @@ VNET_DEVICE_CLASS_TX_FN (dpdk_device_class) (vlib_main_t * vm,
       dpdk_prefetch_buffer (vm, mb[6]);
       dpdk_prefetch_buffer (vm, mb[7]);
 
+      // -- calc_latency START --
       b[0] = vlib_buffer_from_rte_mbuf (mb[0]);
+      calc_latency(vm, b[0], now, lat_stats, total_lat_stats, vlib_buffer_length_in_chain (vm, b[0]));
       b[1] = vlib_buffer_from_rte_mbuf (mb[1]);
+      calc_latency(vm, b[1], now, lat_stats, total_lat_stats, vlib_buffer_length_in_chain (vm, b[1]));
       b[2] = vlib_buffer_from_rte_mbuf (mb[2]);
+      calc_latency(vm, b[2], now, lat_stats, total_lat_stats, vlib_buffer_length_in_chain (vm, b[2]));
       b[3] = vlib_buffer_from_rte_mbuf (mb[3]);
+      calc_latency(vm, b[3], now, lat_stats, total_lat_stats, vlib_buffer_length_in_chain (vm, b[3]));
+      // -- calc_latency END --
 
       or_flags = b[0]->flags | b[1]->flags | b[2]->flags | b[3]->flags;
 
@@ -432,8 +385,12 @@ VNET_DEVICE_CLASS_TX_FN (dpdk_device_class) (vlib_main_t * vm,
       b3 = vlib_buffer_from_rte_mbuf (mb[3]);
       clib_prefetch_load (b3);
 
+      // -- calc_latency START --
       b[0] = vlib_buffer_from_rte_mbuf (mb[0]);
+      calc_latency(vm, b[0], now, lat_stats, total_lat_stats, vlib_buffer_length_in_chain (vm, b[0]));
       b[1] = vlib_buffer_from_rte_mbuf (mb[1]);
+      calc_latency(vm, b[1], now, lat_stats, total_lat_stats, vlib_buffer_length_in_chain (vm, b[1]));
+      // -- calc_latency END --
 
       or_flags = b[0]->flags | b[1]->flags;
 
@@ -473,6 +430,13 @@ VNET_DEVICE_CLASS_TX_FN (dpdk_device_class) (vlib_main_t * vm,
       b[0] = vlib_buffer_from_rte_mbuf (mb[0]);
 
       dpdk_validate_rte_mbuf (vm, b[0], 1);
+
+      // -- calc_latency START --
+      calc_latency(vm, b[0], now, lat_stats, total_lat_stats, vlib_buffer_length_in_chain (vm, b[0]));
+      // debug latency stats
+      // clib_warning("dpdk-tx device_name[%s] packet size n_bytes: %d, identifier: %d, b->flag: %x", xd->name,  vlib_buffer_length_in_chain(vm, b[0]), ((vnet_buffer_opaque2_t *) (b[0])->opaque2)->protocol_identifier, b[0]->flags);
+      // -- calc_latency END --
+
       dpdk_buffer_tx_offload (xd, b[0], mb[0]);
 
       if (PREDICT_FALSE (node->flags & VLIB_NODE_FLAG_TRACE))

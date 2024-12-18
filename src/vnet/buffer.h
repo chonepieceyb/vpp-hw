@@ -496,8 +496,12 @@ typedef struct
   } nat;
 
   // use 8 byte unused space to store the protocol identifier
-  u64 protocal_identifier;
-  u32 unused[6];
+  u32 protocol_identifier;
+  // wether this packet has been counted by calc_latency()
+  u32 is_counted;
+  // store the timestamp of the packet inconming time
+  u64 timestamp;
+  u32 unused[4];
 } vnet_buffer_opaque2_t;
 
 #define vnet_buffer2(b) ((vnet_buffer_opaque2_t *) (b)->opaque2)

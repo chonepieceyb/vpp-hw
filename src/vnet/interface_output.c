@@ -37,6 +37,8 @@
  *  WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include <vppinfra/clib.h>
+#include <vppinfra/error.h>
 #include <vnet/vnet.h>
 #include <vnet/ip/icmp46_packet.h>
 #include <vnet/ethernet/packet.h>
@@ -48,6 +50,7 @@
 #include <vnet/classify/pcap_classify.h>
 #include <vnet/hash/hash.h>
 #include <vnet/interface_output.h>
+#include <vnet/calc_latency.h>
 #include <vppinfra/vector/mask_compare.h>
 #include <vppinfra/vector/compress.h>
 #include <vppinfra/vector/count_equal.h>
@@ -186,6 +189,11 @@ vnet_interface_output_node_inline (vlib_main_t *vm, u32 sw_if_index,
   u32 n_bytes = 0;
   u32 n_bytes0, n_bytes1, n_bytes2, n_bytes3;
   u32 ti = vm->thread_index;
+  // get latency statistics counter
+  latency_counter_t *lat_stats = vm->lat_stats;
+  latency_counter_t *total_lat_stats = &(vm->total_lat_stats);
+  // get nano second timestamp
+  u64 now = (u64) (vlib_time_now(vm) * 1e9);
 
   while (n_left >= 8)
     {
@@ -206,11 +214,37 @@ vnet_interface_output_node_inline (vlib_main_t *vm, u32 sw_if_index,
       ASSERT (b[1]->current_length > 0);
       ASSERT (b[2]->current_length > 0);
       ASSERT (b[3]->current_length > 0);
-
       n_bytes += n_bytes0 = vlib_buffer_length_in_chain (vm, b[0]);
       n_bytes += n_bytes1 = vlib_buffer_length_in_chain (vm, b[1]);
       n_bytes += n_bytes2 = vlib_buffer_length_in_chain (vm, b[2]);
       n_bytes += n_bytes3 = vlib_buffer_length_in_chain (vm, b[3]);
+
+      // -- calc_latency START --
+      // Here only calculate the latency of the packets from tap0-output node
+      // other packets which could be rediect to Trex will be calculated in `dpdk-tx` node, or calculated at `error-drop` node
+      // Trick: TAP host packet will go out at tap0-output node, its sw_if_index(tap-0) is 5, and its protocal_identifier is 8
+      // TODO: generailize this to support other protocols
+      if (PREDICT_FALSE(((vnet_buffer_opaque2_t *) (b[0])->opaque2)->protocol_identifier == 8)) {
+        if (PREDICT_TRUE(sw_if_index == 5)) {
+          calc_latency(vm, b[0], now, lat_stats, total_lat_stats, n_bytes0);
+        }
+      }
+      if (PREDICT_FALSE(((vnet_buffer_opaque2_t *) (b[1])->opaque2)->protocol_identifier == 8)) {
+        if (PREDICT_TRUE(sw_if_index == 5)) {
+          calc_latency(vm, b[1], now, lat_stats, total_lat_stats, n_bytes1);
+        }
+      }
+      if (PREDICT_FALSE(((vnet_buffer_opaque2_t *) (b[2])->opaque2)->protocol_identifier == 8)) {
+        if (PREDICT_TRUE(sw_if_index == 5)) {
+          calc_latency(vm, b[2], now, lat_stats, total_lat_stats, n_bytes2);
+        }
+      }
+      if (PREDICT_FALSE(((vnet_buffer_opaque2_t *) (b[3])->opaque2)->protocol_identifier == 8)) {
+        if (PREDICT_TRUE(sw_if_index == 5)) {
+          calc_latency(vm, b[3], now, lat_stats, total_lat_stats, n_bytes3);
+        }
+      }
+      // -- calc_latency END --
 
       if (processing_level >= 3)
 	{
@@ -274,6 +308,17 @@ vnet_interface_output_node_inline (vlib_main_t *vm, u32 sw_if_index,
       ASSERT (b[0]->current_length > 0);
 
       n_bytes += n_bytes0 = vlib_buffer_length_in_chain (vm, b[0]);
+
+      // -- calc_latency START --
+      if (PREDICT_FALSE(((vnet_buffer_opaque2_t *) (b[0])->opaque2)->protocol_identifier == 8)) {
+        if (PREDICT_TRUE(sw_if_index == 5)) {
+          calc_latency(vm, b[0], now, lat_stats, total_lat_stats, n_bytes0);
+          // debug latency stats
+          // clib_warning("ethernet-tx sw_if_index[%d] packet size n_bytes: %d, identifier: %d, b->flag: %x", sw_if_index, vlib_buffer_length_in_chain(vm, b[0]), ((vnet_buffer_opaque2_t *) (b[0])->opaque2)->protocol_identifier, b[0]->flags);
+        }
+      }
+      // -- calc_latency END --
+  
 
       if (processing_level >= 3)
 	{
