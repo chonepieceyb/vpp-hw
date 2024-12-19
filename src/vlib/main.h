@@ -284,6 +284,13 @@ typedef struct vlib_main_t
   latency_counter_t lat_stats[MAX_LATENCY_TRACE_COUNT];
   // last time reset latency statistics
   f64 last_timestamp;
+  // dpdk-input node dispatch count
+  i64 dpdk_input_dispatch_count;
+  // current remaing in memory pkts count
+  //   = (dpdk-input node receive pkt count) - (dpdk-tx node send pkt count)
+  i64 remaing_pkts_count;
+  // sum up every time dpdk-input node dispatch remaining pkts count
+  i64 remaing_pkts_count_total;
 } vlib_main_t;
 
 typedef struct vlib_global_main_t
