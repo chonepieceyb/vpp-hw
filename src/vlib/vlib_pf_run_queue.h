@@ -3,7 +3,7 @@
 #include "vppinfra/types.h"
 #include <vppinfra/vec.h>
 
-#define PF_RUNQ_TYPE 1
+#define PF_RUNQ_TYPE 0
 typedef struct
 {
   u32 ring_size; 
