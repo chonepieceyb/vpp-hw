@@ -12,7 +12,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "vppinfra/time.h"
 #include <vnet/vnet.h>
 #include <vppinfra/vec.h>
 #include <vppinfra/error.h>
@@ -354,8 +353,6 @@ dpdk_device_input (vlib_main_t * vm, dpdk_main_t * dm, dpdk_device_t * xd,
   u16 *next;
   u32 or_flags;
   u32 n;
-  u32 batch_size;
-  f64 timeouts, start;
   int single_next = 0;
 
   dpdk_per_thread_data_t *ptd = vec_elt_at_index (dm->per_thread_data,
@@ -365,36 +362,19 @@ dpdk_device_input (vlib_main_t * vm, dpdk_main_t * dm, dpdk_device_t * xd,
   if ((xd->flags & DPDK_DEVICE_FLAG_ADMIN_UP) == 0)
     return 0;
 
-  /* get up to xd->batch_size (default equals to DPDK_RX_BURST_SZ buffers from PMD */
-
-//   while (n_rx_packets < DPDK_RX_BURST_SZ)
-//     {
-//       u32 n_to_rx = clib_min (DPDK_RX_BURST_SZ - n_rx_packets, 32);
-
-//       n = rte_eth_rx_burst (xd->port_id, queue_id, ptd->mbufs + n_rx_packets,
-// 			    n_to_rx);
-//       n_rx_packets += n;
-
-//       if (n < n_to_rx)
-// 	break;
-//     }
-  batch_size = xd->batch_size;
-  timeouts = xd->timeout_sec;
-  start = clib_time_now (&vm->clib_time);
-  while (n_rx_packets < batch_size)
+  /* get up to DPDK_RX_BURST_SZ buffers from PMD */
+  while (n_rx_packets < DPDK_RX_BURST_SZ)
     {
-      u32 n_to_rx = clib_min (batch_size - n_rx_packets, 32);
+      u32 n_to_rx = clib_min (DPDK_RX_BURST_SZ - n_rx_packets, 32);
 
       n = rte_eth_rx_burst (xd->port_id, queue_id, ptd->mbufs + n_rx_packets,
 			    n_to_rx);
       n_rx_packets += n;
 
-      if (n < n_to_rx) {
-	if (clib_time_now (&vm->clib_time) - start >= timeouts) {
-		break;
-	}
-      }
+      if (n < n_to_rx)
+	break;
     }
+
   if (n_rx_packets == 0)
     return 0;
 
