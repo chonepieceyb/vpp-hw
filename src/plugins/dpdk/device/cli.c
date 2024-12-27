@@ -401,9 +401,6 @@ reset_packets_latency_fn (vlib_main_t * vm,
     total_lat_stats_ptr->total_pkts = 0;
     total_lat_stats_ptr->timeout_pkts = 0;
     total_lat_stats_ptr->total_bytes = 0;
-    // reset the remaining packets count
-    curr_vm->remaing_pkts_count_total = 0;
-    curr_vm->dpdk_input_dispatch_count = 0;
     for (int i = 1; i < MAX_LATENCY_TRACE_COUNT; i++) {
       // reset the statistics
       lat_stats_ptr[i].total_latency = 0;
@@ -454,7 +451,6 @@ show_packets_latency_fn (vlib_main_t * vm,
   // aggregation
   latency_counter_t total_lat_stats = {0};
   latency_counter_t lat_stats[MAX_LATENCY_TRACE_COUNT] = {0};
-  i64 avg_remaing_pkts = 0;
 
   vlib_worker_thread_barrier_sync (vm);
   for (i = 0; i < tm->n_vlib_mains; i++) {
@@ -466,10 +462,6 @@ show_packets_latency_fn (vlib_main_t * vm,
     total_lat_stats.total_pkts += total_lat_stats_ptr->total_pkts;
     total_lat_stats.timeout_pkts += total_lat_stats_ptr->timeout_pkts;
     total_lat_stats.total_bytes += total_lat_stats_ptr->total_bytes;
-    // calculate the average remaining packets count
-    if (curr_vm->dpdk_input_dispatch_count != 0) {
-      avg_remaing_pkts = curr_vm->remaing_pkts_count_total / curr_vm->dpdk_input_dispatch_count;
-    }
     for (int i = 1; i < MAX_LATENCY_TRACE_COUNT; i++) {
       lat_stats[i].total_latency += lat_stats_ptr[i].total_latency;
       lat_stats[i].total_pkts += lat_stats_ptr[i].total_pkts;
@@ -504,8 +496,8 @@ show_packets_latency_fn (vlib_main_t * vm,
     if (lat_stats[i].total_pkts != 0) {
       avg_lat = lat_stats[i].total_latency / lat_stats[i].total_pkts;
     }
-    vlib_cli_output (vm, "protocol_identifier: %d, avg_throughput(pkt/s): %lu, avg_throughput(bits/s): %lu, avg_lat(ns): %lu, timeout_pkts: %lu, total_pkts: %lu, total_latency: %lu, avg_remaing_pkts: %lld",
-                      i, avg_throughput_pkts, avg_throughput_bits, avg_lat, lat_stats[i].timeout_pkts, lat_stats[i].total_pkts, lat_stats[i].total_latency, avg_remaing_pkts);
+    vlib_cli_output (vm, "protocol_identifier: %d, avg_throughput(pkt/s): %lu, avg_throughput(bits/s): %lu, avg_lat(ns): %lu, timeout_pkts: %lu, total_pkts: %lu, total_latency: %lu",
+                      i, avg_throughput_pkts, avg_throughput_bits, avg_lat, lat_stats[i].timeout_pkts, lat_stats[i].total_pkts, lat_stats[i].total_latency);
   }
   return 0;
 }
@@ -544,7 +536,6 @@ show_packets_latency_and_reset_fn (vlib_main_t * vm,
   // aggregation
   latency_counter_t total_lat_stats = {0};
   latency_counter_t lat_stats[MAX_LATENCY_TRACE_COUNT] = {0};
-  i64 avg_remaing_pkts = 0;
 
   vlib_worker_thread_barrier_sync (vm);
   for (i = 0; i < tm->n_vlib_mains; i++) {
@@ -556,18 +547,11 @@ show_packets_latency_and_reset_fn (vlib_main_t * vm,
     total_lat_stats.total_pkts += total_lat_stats_ptr->total_pkts;
     total_lat_stats.timeout_pkts += total_lat_stats_ptr->timeout_pkts;
     total_lat_stats.total_bytes += total_lat_stats_ptr->total_bytes;
-    // calculate the average remaining packets count
-    if (curr_vm->dpdk_input_dispatch_count != 0) {
-      avg_remaing_pkts = curr_vm->remaing_pkts_count_total / curr_vm->dpdk_input_dispatch_count;
-    }
     // reset the statistics
     total_lat_stats_ptr->total_latency = 0;
     total_lat_stats_ptr->total_pkts = 0;
     total_lat_stats_ptr->timeout_pkts = 0;
     total_lat_stats_ptr->total_bytes = 0;
-    // reset the remaining packets count
-    curr_vm->remaing_pkts_count_total = 0;
-    curr_vm->dpdk_input_dispatch_count = 0;
     for (int i = 1; i < MAX_LATENCY_TRACE_COUNT; i++) {
       lat_stats[i].total_latency += lat_stats_ptr[i].total_latency;
       lat_stats[i].total_pkts += lat_stats_ptr[i].total_pkts;
@@ -594,8 +578,8 @@ show_packets_latency_and_reset_fn (vlib_main_t * vm,
   if (total_lat_stats.total_pkts != 0) {
     avg_lat = total_lat_stats.total_latency / total_lat_stats.total_pkts;
   }
-  vlib_cli_output (vm, "avg_throughput(pkt/s): %lu, avg_throughput(bits/s): %lu, avg_lat(ns): %lu, timeout_pkts: %lu, total_pkts: %lu, total_latency: %lu, avg_remaing_pkts: %lld",
-                    avg_throughput_pkts, avg_throughput_bits, avg_lat, total_lat_stats.timeout_pkts, total_lat_stats.total_pkts, total_lat_stats.total_latency, avg_remaing_pkts);
+  vlib_cli_output (vm, "avg_throughput(pkt/s): %lu, avg_throughput(bits/s): %lu, avg_lat(ns): %lu, timeout_pkts: %lu, total_pkts: %lu, total_latency: %lu",
+                    avg_throughput_pkts, avg_throughput_bits, avg_lat, total_lat_stats.timeout_pkts, total_lat_stats.total_pkts, total_lat_stats.total_latency);
 
   // print each protocol latency
   for(int i = 1; i < MAX_LATENCY_TRACE_COUNT; i++) {
@@ -612,35 +596,6 @@ show_packets_latency_and_reset_fn (vlib_main_t * vm,
   }
   return 0;
 }
-
-static clib_error_t *
-show_io_count_and_reset_fn (vlib_main_t * vm, unformat_input_t * input, vlib_cli_command_t * cmd) {
-  vlib_thread_main_t *tm = vlib_get_thread_main ();
-  u32 i;
-
-  // vlib_worker_thread_barrier_sync (vm);
-  for (i = 0; i < tm->n_vlib_mains; i++) {
-    vlib_main_t *curr_vm = vlib_get_main_by_index(i);
-    i64 avg_remaing_pkts = 0;
-    if (curr_vm->dpdk_input_dispatch_count != 0) {
-      avg_remaing_pkts = curr_vm->remaing_pkts_count_total / curr_vm->dpdk_input_dispatch_count;
-    }
-    vlib_cli_output (vm,"thread: %lld, avg_remaing_pkts: %lld, dpdk_input_dispatch_count: %lld, remaing_pkts_count: %lld, remaing_pkts_count_total: %lld",
-                                 i, avg_remaing_pkts, curr_vm->dpdk_input_dispatch_count, curr_vm->remaing_pkts_count, curr_vm->remaing_pkts_count_total);
-    curr_vm->dpdk_input_dispatch_count = 0;
-    curr_vm->remaing_pkts_count_total = 0;
-  }
-  // vlib_worker_thread_barrier_release (vm);
-  return 0;
-}
-
-/* *INDENT-OFF* */
-VLIB_CLI_COMMAND (show_io_count_and_reset, static) = {
-  .path = "dpdk iocount show",
-  .short_help = "dpdk iocount show",
-  .function = show_io_count_and_reset_fn,
-};
-/* *INDENT-ON* */
 
 /*?
  * This command is used to display the current packets average latency and RESET the record.
