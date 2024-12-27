@@ -409,10 +409,6 @@ dpdk_device_input (vlib_main_t * vm, dpdk_main_t * dm, dpdk_device_t * xd,
     vlib_buffer_t *pkt = vlib_buffer_from_rte_mbuf (ptd->mbufs[n]);
     add_timestamps(vm, pkt, now);
   }
-  // increment remaing packets count, used for ringbuffer utilization calculation
-  vm->remaing_pkts_count_total += vm->remaing_pkts_count;
-//   vm->remaing_pkts_count += n_rx_packets;
-  vm->dpdk_input_dispatch_count++;
   // -- calc_latency END --
 
   /* Update buffer template */

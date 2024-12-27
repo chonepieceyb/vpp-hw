@@ -47,10 +47,6 @@ static_always_inline void calc_latency (vlib_main_t *vm, vlib_buffer_t *pkt, u64
   total_lat_stats->total_pkts++;
   total_lat_stats->total_latency += packet_latency;
   total_lat_stats->total_bytes += pkt_bytes;
-
-  // decrease the remaining packets count
-  // vm->remaing_pkts_count--;
-
   return;
 }
 

@@ -190,9 +190,6 @@ vlib_put_frame_to_node (vlib_main_t * vm, u32 to_node_index, vlib_frame_t * f)
   //clib_warning("+++++++++++ vpp add pending frame to runq, pfi %lu+++++++++++++++++++", p - vm->node_main.pending_frames);
   /* put_frame_to_node have no next_frame, directly put into runq */
   vec_add1(vm->node_main.pf_runq, p - vm->node_main.pending_frames);
-
-  // !! add remaing count !!
-  vm->remaing_pkts_count += f->n_vectors;
 }
 
 /* Free given frame. */
@@ -518,9 +515,6 @@ vlib_put_next_frame (vlib_main_t * vm,
 	  p->is_timeout = 0;
 	  nf->flags |= VLIB_FRAME_PENDING;
 	  f->frame_flags |= VLIB_FRAME_PENDING;
-
-          // !! add remaing count !!
-          vm->remaing_pkts_count += f->n_vectors;
 
 	  // add p to wait queue or run queue
 	  if (f->n_vectors >= rt->batch_size || rt->timeout_interval == 0 || vm->barrier_flush) {
@@ -1194,9 +1188,6 @@ dispatch_pending_node (vlib_main_t * vm, uword pending_frame_index,
   n->flags &= ~VLIB_NODE_FLAG_TRACE;
   n->flags |= (nf->flags & VLIB_FRAME_TRACE) ? VLIB_NODE_FLAG_TRACE : 0;
   nf->flags &= ~VLIB_FRAME_TRACE;
-
-  // !! sub remaing count !!
-  vm->remaing_pkts_count -= f->n_vectors;
 
   //clib_warning("+++++++++++++++++vpp before dispatch node  pf index %lu, node runtime index %lu, node_name %v++++++++++++++", pending_frame_index, p->node_runtime_index, node_name);
   last_time_stamp = dispatch_node (vm, n,
