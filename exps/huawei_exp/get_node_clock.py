@@ -14,7 +14,16 @@ DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 
 
 # nodes = ['ethernet-input', 'ip4-inacl', 'ip4-input-no-checksum', 'ip4-lookup', 'ip4-rewrite', 'ip4-sv-reassembly-feature', 'ip6-input', 'ip6-lookup', 'ip6-rewrite', 'nat-pre-in2out', 'nat44-ed-in2out', 'nat44-ed-in2out-slowpath']
-nodes = ['Ethernet1-output', 'ethernet-input', 'ip4-inacl', 'ip4-input-no-checksum', 'ip4-lookup', 'ip4-rewrite', 'ip4-sv-reassembly-feature', 'ip6-input', 'ip6-lookup', 'ip6-rewrite', 'nat-pre-in2out', 'nat44-ed-in2out', 'nat44-ed-in2out-slowpath']
+nodes = [
+         'ethernet-input', 
+         'ip4-inacl', 'ip4-input-no-checksum', 'ip4-lookup', 'ip4-rewrite', 'ip4-sv-reassembly-feature',
+         'ip6-input', 'ip6-lookup', 'ip6-rewrite',
+         'nat-pre-in2out','nat44-ed-in2out', 'nat44-ed-in2out-slowpath',
+         'arp-input', 'arp-reply',
+         'ip4-icmp-input', 'ip4-icmp-echo-request',
+         'ip4-mfib-forward-lookup', 'ip4-mfib-forward-rpf',
+         'tap0-output',
+         'l2-input', 'l2-fwd']
 batch_sizes = range(1, 256, 2)
 timeout = 900000000
 
@@ -53,10 +62,16 @@ class VppExpData(Base):
     deleted = Column(Boolean)
 
 # 初始化数据库连接:
-engine = create_engine('sqlite:///vpp_exp.db')
-# 创建数据库表
+engine = create_engine("sqlite:///node_clock_exp_all.db")
+
+# 新创建数据库表
 Base.metadata.create_all(engine)
-# 创建DBSession类型:
+
+# 连接到现有数据库
+# Base.metadata.bind = engine
+# Base.metadata.reflect(engine)
+
+# 创建DBSession
 session_maker = sessionmaker(bind=engine)
 DBSession = session_maker()
 
