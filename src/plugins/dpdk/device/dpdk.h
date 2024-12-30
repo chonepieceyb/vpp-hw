@@ -56,19 +56,6 @@ extern vlib_node_registration_t admin_up_down_process_node;
 
 typedef uint16_t dpdk_portid_t;
 
-// Timeout packet count thresholder, 1ms
-#define TIME_OUT_THRESHOULDER_NS 1000000
-
-// maxmium number of protocol latency trace count
-#define MAX_LATENCY_TRACE_COUNT 20
-
-struct dpdk_lat_t {
-  uint64_t total_latency; /* Total latency of all packets between in and out vpp */
-  uint64_t total_pkts; /* Total packets between in and out vpp */
-  uint64_t timeout_pkts; /* latency greater than TIME_OUT_THRESHOULDER_NS packets count */
-  uint64_t total_bytes; /* Total throughput in bytes */
-};
-
 #define foreach_dpdk_device_flags                                             \
   _ (0, ADMIN_UP, "admin-up")                                                 \
   _ (1, PROMISC, "promisc")                                                   \
@@ -330,10 +317,6 @@ typedef struct
   u16 next[DPDK_RX_BURST_SZ];
   u16 etype[DPDK_RX_BURST_SZ];
   u32 flags[DPDK_RX_BURST_SZ];
-  /* latency calculation used temp store */
-  CLIB_CACHE_LINE_ALIGN_MARK (cacheline1);
-  struct dpdk_lat_t total_lat_stats;
-  struct dpdk_lat_t lat_stats[MAX_LATENCY_TRACE_COUNT];
   vlib_buffer_t buffer_template;
 
 } dpdk_per_thread_data_t;
