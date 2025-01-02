@@ -13,20 +13,24 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 
 
-# nodes = ['ethernet-input', 'ip4-inacl', 'ip4-input-no-checksum', 'ip4-lookup', 'ip4-rewrite', 'ip4-sv-reassembly-feature', 'ip6-input', 'ip6-lookup', 'ip6-rewrite', 'nat-pre-in2out', 'nat44-ed-in2out', 'nat44-ed-in2out-slowpath']
 nodes = [
          'ethernet-input', 
-         'ip4-inacl', 'ip4-input-no-checksum', 'ip4-lookup', 'ip4-rewrite', 'ip4-sv-reassembly-feature',
+         'ip4-input-no-checksum', 'ip4-sv-reassembly-feature', 'nat-pre-in2out',
+         'nat44-ed-in2out', 'nat44-ed-in2out-slowpath',
+         'ip4-inacl', 'ip4-lookup', 'ip4-rewrite', 'Ethernet1-output',
          'ip6-input', 'ip6-lookup', 'ip6-rewrite',
-         'nat-pre-in2out','nat44-ed-in2out', 'nat44-ed-in2out-slowpath',
          'arp-input', 'arp-reply',
-         'ip4-icmp-input', 'ip4-icmp-echo-request',
-         'ip4-mfib-forward-lookup', 'ip4-mfib-forward-rpf',
-         'tap0-output',
-         'l2-input', 'l2-fwd']
-batch_sizes = range(1, 256, 2)
-timeout = 900000000
-
+         'ip4-receive', 'ip4-icmp-input', 'ip4-icmp-echo-request', 'ip4-icmp-echo-request', 'ip4-load-balance', 
+         'ip4-mfib-forward-lookup', 'ip4-mfib-forward-rpf', 'ip4-drop', 'error-drop', 'drop', 
+         'loop0-output','l2-input', 'l2-fwd', 'l2-output', 'tap0-output', 
+         # 调节TX节点偶尔会导致VPP崩溃，暂时不调
+        #  'tap0-tx', 'loop0-tx', 'Ethernet1-tx',
+         ]
+batch_sizes = range(1, 256+1, 1)
+# timeout 不可以过大，否则会导致时间轮失效无法攒包
+timeout = 2000
+duration = 3
+exp_repeat_count = 3
 
 Base = declarative_base()
 
@@ -62,7 +66,7 @@ class VppExpData(Base):
     deleted = Column(Boolean)
 
 # 初始化数据库连接:
-engine = create_engine("sqlite:///node_clock_exp_all.db")
+engine = create_engine("sqlite:///node_clock_exp_all.sqlite")
 
 # 新创建数据库表
 Base.metadata.create_all(engine)
@@ -74,9 +78,6 @@ Base.metadata.create_all(engine)
 # 创建DBSession
 session_maker = sessionmaker(bind=engine)
 DBSession = session_maker()
-
-duration = 3
-exp_repeat_count = 5
 
 def extract_vpp_wk_0_perf_stats(input_string):
     # Use regular expressions to find the section between vpp_wk_0 (1) and vpp_wk_1 (2)
@@ -279,6 +280,7 @@ def reset_all_node_batch_size():
     ]
     for node in nodes:
         command.extend([node, "size", '256', "timeout", '0'])
+    print("Reset all node batch size...")
     subprocess.run(command, check=True)
 
 def record_exp_data():
