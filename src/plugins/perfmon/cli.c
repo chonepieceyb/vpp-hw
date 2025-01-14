@@ -592,3 +592,45 @@ VLIB_CLI_COMMAND (perfmon_stop_command, static) = {
   .function = perfmon_stop_command_fn,
   .is_mp_safe = 1,
 };
+
+static clib_error_t *
+perfmon_show_cache_history_command_fn (vlib_main_t *vm, unformat_input_t *input,
+					vlib_cli_command_t *cmd)
+{
+  perfmon_main_t *pm = &perfmon_main;
+  // perfmon_bundle_t *bundle = pm->active_bundle;
+  clib_error_t *err = 0;
+  perfmon_thread_runtime_t *tr;
+  int i;
+  // skip main thread, only print worker threads
+  for(i = 1; i < vec_len(pm->thread_runtimes); i++) {
+    tr = vec_elt_at_index (pm->thread_runtimes, i);
+    // print header
+//     vlib_cli_output (vm, "node_name,begin_time,end_time,time_consume,l1i_miss,l1d_miss,l2_miss,l3_miss,n_pkts\n");
+    vlib_cli_output (vm, "node_name,time_consume,l1i_miss,l1d_miss,l2_miss,l3_miss,n_pkts\n");
+      for (int j = 0; j < NODE_CACHE_HISTORY_LENGTH; j++) {
+        perfmon_node_cache_history_entry_t *history_entry = vec_elt_at_index (tr->node_cache_history, j);
+        u64 time_consumed = (u64)(history_entry->end_timestamp*1e9) - (u64)(history_entry->begin_timestamp*1e9);
+        u64 l1i_miss = history_entry->cache_value_after[0] - history_entry->cache_value_before[0];
+        u64 l1d_miss = history_entry->cache_value_after[1] - history_entry->cache_value_before[1];
+        u64 l2_miss = history_entry->cache_value_after[2] - history_entry->cache_value_before[2];
+        u64 l3_miss = history_entry->cache_value_after[3] - history_entry->cache_value_before[3];
+        // vlib_cli_output (vm, "%U,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%u\n",
+        vlib_cli_output (vm, "%U,%lu,%lu,%lu,%lu,%lu,%u\n",
+          format_vlib_node_name, vm, history_entry->node_index,
+        //   (u64)(history_entry->begin_timestamp*1e9), (u64)(history_entry->end_timestamp*1e9), time_consumed,
+          time_consumed,
+          l1i_miss, l1d_miss, l2_miss, l3_miss,
+          history_entry->n_packets
+        );
+      }
+  }
+  return err;
+}
+
+VLIB_CLI_COMMAND (perfmon_show_cache_history_command, static) = {
+  .path = "perfmon cache history show",
+  .short_help = "perfmon cache history show",
+  .function = perfmon_show_cache_history_command_fn,
+  .is_mp_safe = 1,
+};

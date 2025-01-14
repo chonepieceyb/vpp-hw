@@ -185,6 +185,23 @@ typedef struct
   };
 } perfmon_node_stats_t;
 
+
+#define NODE_CACHE_HISTORY_LENGTH 500
+typedef struct {
+  // 当前被记录的 node 的 index
+  u32 node_index;
+  // 当前 node 的 cache pmu 执行前的数值
+  u64 cache_value_before[PERF_MAX_EVENTS];
+  // 当前 node 的 cache pmu 执行后的数值
+  u64 cache_value_after[PERF_MAX_EVENTS];
+  // 当前 node 执行前的时间戳
+  f64 begin_timestamp;
+  // 当前 node 执行后的时间戳
+  f64 end_timestamp;
+  // 本次调度处理的包数
+  u32 n_packets;
+} perfmon_node_cache_history_entry_t;
+
 typedef struct
 {
   u8 n_events;
@@ -194,6 +211,11 @@ typedef struct
   u32 indexes[PERF_MAX_EVENTS];
   u16 preserve_samples;
   struct perf_event_mmap_page *mmap_pages[PERF_MAX_EVENTS];
+
+  // add cache history array, it inited at perfmon_set()
+  perfmon_node_cache_history_entry_t *node_cache_history;
+  // pointer to current cache history entry, only record first NODE_CACHE_HISTORY_LENGTH entries
+  u32 cache_history_current_index;
 } perfmon_thread_runtime_t;
 
 typedef struct

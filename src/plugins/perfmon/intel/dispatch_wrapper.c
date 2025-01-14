@@ -43,6 +43,9 @@ perfmon_dispatch_wrapper_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
     vec_elt_at_index (pm->thread_runtimes, vm->thread_index);
   perfmon_node_stats_t *s =
     vec_elt_at_index (rt->node_stats, node->node_index);
+  // get current history entry
+  perfmon_node_cache_history_entry_t *history_entry =
+    vec_elt_at_index (rt->node_cache_history, rt->cache_history_current_index);
 
   struct
   {
@@ -53,8 +56,31 @@ perfmon_dispatch_wrapper_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
   clib_prefetch_load (s);
 
   perfmon_read_pmcs (&samples.t[0][0], &rt->indexes[0], n_events);
+  // cache history record start
+  if (rt->cache_history_current_index < NODE_CACHE_HISTORY_LENGTH) {
+    f64 begin_timestamp = vlib_time_now (vm);
+    history_entry->begin_timestamp = begin_timestamp;
+    for (int i = 0; i < n_events; i++)
+      {
+        history_entry->cache_value_before[i] = samples.t[0][i];
+      }
+  }
+
   rv = node->function (vm, node, frame);
+
   perfmon_read_pmcs (&samples.t[1][0], &rt->indexes[0], n_events);
+  if (rt->cache_history_current_index < NODE_CACHE_HISTORY_LENGTH) {
+    f64 end_timestamp = vlib_time_now (vm);
+    history_entry->end_timestamp = end_timestamp;
+    for (int i = 0; i < n_events; i++)
+      {
+        history_entry->cache_value_after[i] = samples.t[1][i];
+      }
+    history_entry->n_packets = rv;
+    history_entry->node_index = node->node_index;
+    rt->cache_history_current_index++;
+  }
+  // cache history record end
 
   if (rv == 0)
     return rv;

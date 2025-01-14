@@ -68,10 +68,13 @@ perfmon_reset (vlib_main_t *vm)
     {
       perfmon_thread_runtime_t *tr = vec_elt_at_index (pm->thread_runtimes, i);
       vec_free (tr->node_stats);
+      // free cache history array
+      vec_free (tr->node_cache_history);
       for (int j = 0; j < PERF_MAX_EVENTS; j++)
 	if (tr->mmap_pages[j])
 	  munmap (tr->mmap_pages[j], page_size);
     }
+  
   vec_free (pm->thread_runtimes);
 
   pm->is_running = 0;
@@ -113,8 +116,14 @@ perfmon_set (vlib_main_t *vm, perfmon_bundle_t *b)
 	  in->pid = w->lwp;
 	  in->name = (char *) format (0, "%s (%u)%c", w->name, i, 0);
 	}
-      if (is_node)
+      if (is_node) {
 	vec_validate (pm->thread_runtimes, vlib_get_n_threads () - 1);
+	// Initialize cache history array
+	perfmon_thread_runtime_t *thread_runtime;
+	vec_foreach(thread_runtime, pm->thread_runtimes) {
+	  vec_validate (thread_runtime->node_cache_history, NODE_CACHE_HISTORY_LENGTH);
+	}
+      }
     }
   else
     {
