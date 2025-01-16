@@ -101,6 +101,7 @@ typedef enum {
   DISPATCHER_NEXT_PROTOCOL_30,
   DISPATCHER_NEXT_PROTOCOL_31,
   DISPATCHER_NEXT_PROTOCOL_32,
+  DISPATCHER_NEXT_IP6_LOOKUP,
   DISPATCHER_NEXT_DROP,
   DISPATCHER_N_NEXT,
 } dispatcher_next_t;
@@ -161,14 +162,21 @@ VLIB_NODE_FN(dispatcher_node)
       ip0 = vlib_buffer_get_current(b0);
       ip1 = vlib_buffer_get_current(b1);
       
-      //u8 id0 = ip0->address_pair.src.as_u8[3] % PROTOCOL_NUM;
+      // protocol流编号在ipv6 src 地址的第四个字节
       u8 id0 = ip0->src_address.as_u8[3] % PROTOCOL_NUM;
-      next0 = clib_min(DISPATCHER_NEXT_PROTOCOL_1 + id0, DISPATCHER_NEXT_DROP);
+      // ipv6地址的第一个字节为ff时，表示为正常的ipv6报文，不经过protocol节点
+      if (ip0->src_address.as_u8[0] == 0xff) {
+        next0 = DISPATCHER_NEXT_IP6_LOOKUP;
+      } else {
+        next0 = clib_min(DISPATCHER_NEXT_PROTOCOL_1 + id0, DISPATCHER_NEXT_DROP);
+      }
 
-      //u8 id1 = ip1->address_pair.src.as_u8[3] % PROTOCOL_NUM;
-      u8 id1 = ip0->src_address.as_u8[3] % PROTOCOL_NUM;
-      //u8 id1 = 0;
-      next1 =  clib_min(DISPATCHER_NEXT_PROTOCOL_1 + id1, DISPATCHER_NEXT_DROP);
+      u8 id1 = ip1->src_address.as_u8[3] % PROTOCOL_NUM;
+      if (ip1->src_address.as_u8[0] == 0xff) {
+        next1 = DISPATCHER_NEXT_IP6_LOOKUP;
+      } else {
+        next1 = clib_min(DISPATCHER_NEXT_PROTOCOL_1 + id1, DISPATCHER_NEXT_DROP);
+      }
 
       pkts_dispatched += 2;
 
@@ -215,10 +223,14 @@ VLIB_NODE_FN(dispatcher_node)
       // 获取ip报文头
       ip0 = vlib_buffer_get_current(b0);
 
-     //u8 id = 0;
-     //u8 id0 = ip0->address_pair.src.as_u8[3] % PROTOCOL_NUM;
+     // 取ipv6地址的第一个字节区分流
      u8 id0 = ip0->src_address.as_u8[3] % PROTOCOL_NUM;
-     next0 = clib_min(DISPATCHER_NEXT_PROTOCOL_1 + id0, DISPATCHER_NEXT_DROP);
+     // 如果ipv6地址的第一个字节为ff，则表示为正常的ipv6报文，不经过protocol节点
+     if (ip0->src_address.as_u8[0] == 0xff) {
+        next0 = DISPATCHER_NEXT_IP6_LOOKUP;
+     } else {
+        next0 = clib_min(DISPATCHER_NEXT_PROTOCOL_1 + id0, DISPATCHER_NEXT_DROP);
+     }
 
       pkts_dispatched += 1;
 
@@ -290,6 +302,7 @@ VLIB_REGISTER_NODE(dispatcher_node) = {
                    [DISPATCHER_NEXT_PROTOCOL_30] = "protocol30",
                    [DISPATCHER_NEXT_PROTOCOL_31] = "protocol31",
                    [DISPATCHER_NEXT_PROTOCOL_32] = "protocol32",
+                   [DISPATCHER_NEXT_IP6_LOOKUP] = "ip6-lookup",
                    [DISPATCHER_NEXT_DROP] = "ip6-drop"},
 };
 #endif /* CLIB_MARCH_VARIANT */
