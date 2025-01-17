@@ -689,6 +689,47 @@ VLIB_CLI_COMMAND (set_dpdk_if_batchsize, static) = {
     .function = set_dpdk_if_batchsize_fn,
 };
 
+// show mvpp overhead and reset statistics
+static clib_error_t *
+show_dpdk_overhead_and_reset_fn (vlib_main_t * vm,
+			      unformat_input_t * input,
+			      vlib_cli_command_t * cmd)
+{
+  vlib_thread_main_t *tm = vlib_get_thread_main ();
+  clib_error_t *error = NULL;
+  int i;
+  vlib_worker_thread_barrier_sync (vm);
+  for (i = 1; i < tm->n_vlib_mains; i++) {
+    vlib_main_t *curr_vm = vlib_get_main_by_index(i);
+    // get overhead statistics counter
+    overhead_statistics_t overhead_stats = curr_vm->overhead_stats;
+    u64 total_overhead = overhead_stats.total_dispatch_time - overhead_stats.total_node_function_time;
+    u64 avg_overhead = total_overhead / overhead_stats.total_dispatch_count;
+    u64 avg_dispatch_time = overhead_stats.total_dispatch_time / overhead_stats.total_dispatch_count;
+    u64 avg_node_function_time = overhead_stats.total_node_function_time / overhead_stats.total_dispatch_count;
+
+    vlib_cli_output (vm, "total_dispatch_time: %lu, total_node_function_time: %lu, total_dispatch_count: %lu, total_overhead: %lu, avg_dispatch_time: %lu, avg_node_function_time: %lu, avg_overhead: %lu",
+                      overhead_stats.total_dispatch_time, overhead_stats.total_node_function_time, overhead_stats.total_dispatch_count, total_overhead, avg_dispatch_time, avg_node_function_time, avg_overhead);
+
+    // reset the statistics
+    curr_vm->overhead_stats.total_dispatch_time = 0;
+    curr_vm->overhead_stats.total_node_function_time = 0;
+    curr_vm->overhead_stats.total_dispatch_count = 0;
+  }
+  vlib_worker_thread_barrier_release (vm);
+  // set timestamp for duration counting
+  vm->last_timestamp = vlib_time_now(vm);
+  return error;
+}
+
+/* *INDENT-OFF* */
+VLIB_CLI_COMMAND (show_dpdk_overhead_and_reset, static) = {
+  .path = "dpdk overhead show",
+  .short_help = "dpdk overhead show",
+  .function = show_dpdk_overhead_and_reset_fn,
+};
+/* *INDENT-ON* */
+
 /* Dummy function to get us linked in. */
 void
 dpdk_cli_reference (void)

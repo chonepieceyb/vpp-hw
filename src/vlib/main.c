@@ -1194,11 +1194,20 @@ dispatch_pending_node (vlib_main_t * vm, uword pending_frame_index,
   n->flags |= (nf->flags & VLIB_FRAME_TRACE) ? VLIB_NODE_FLAG_TRACE : 0;
   nf->flags &= ~VLIB_FRAME_TRACE;
 
+  // overhead exp start
+  f64 node_function_start = vlib_time_now(vm);
+
   //clib_warning("+++++++++++++++++vpp before dispatch node  pf index %lu, node runtime index %lu, node_name %v++++++++++++++", pending_frame_index, p->node_runtime_index, node_name);
   last_time_stamp = dispatch_node (vm, n,
 				   VLIB_NODE_TYPE_INTERNAL,
 				   VLIB_NODE_STATE_POLLING,
 				   f, last_time_stamp, p->dispatch_start_clock, p->is_timeout);
+
+  f64 node_function_end = vlib_time_now(vm);
+  u64 node_function_time = (u64)(node_function_end*1e9) - (u64)(node_function_start*1e9);
+  vm->overhead_stats.total_node_function_time += node_function_time;
+  // overhead exp end
+
   //clib_warning("+++++++++++++++++vpp after dispatch node  pf index %lu, node runtime index %lu, node_name %v++++++++++++++", pending_frame_index, p->node_runtime_index, node_name);
   /* Internal node vector-rate accounting, for summary stats */
   vm->internal_node_vectors += f->n_vectors;
@@ -1733,7 +1742,7 @@ vlib_main_or_worker_loop (vlib_main_t * vm, int is_main)
 //       for (i = 0; i < _vec_len (nm->pending_frames); i++)
 // 	cpu_time_now = dispatch_pending_node (vm, i, cpu_time_now);
       i = 0;
-      u32 ths = vm->timeout_ths, cnt = 0;
+      u32 ths = vm->timeout_ths, cnt = i;
 //       while (1)
 //         {
 // 	  /* dispatch node */
@@ -1751,6 +1760,7 @@ vlib_main_or_worker_loop (vlib_main_t * vm, int is_main)
 // 	  if (i == _vec_len (nm->pf_runq))
 // 	    break;
 //         }
+      f64 dispatch_start = vlib_time_now(vm);
       while (1)
         {
 	  /* dispatch node */
@@ -1769,6 +1779,11 @@ vlib_main_or_worker_loop (vlib_main_t * vm, int is_main)
 	  if (pf_runq_len(nm->pf_runq) == 0)
 	    break;
         }
+      f64 dispatch_end = vlib_time_now(vm);
+      u64 dispatch_time = (u64)(dispatch_end*1e9) - (u64)(dispatch_start*1e9);
+      vm->overhead_stats.total_dispatch_time += dispatch_time;
+      vm->overhead_stats.total_dispatch_count += 1;
+
       /* Reset pending vector for next iteration. */
       //vec_set_len (nm->pending_frames, 0);
       //vec_set_len (nm->pf_runq, 0);
@@ -1890,6 +1905,7 @@ vlib_main_or_worker_loop (vlib_main_t * vm, int is_main)
 	  vm->loop_interval_end = now + 2e-4;
 	  vm->loops_this_reporting_interval = 0;
 	}
+
     }
 }
 

@@ -112,6 +112,12 @@ typedef struct {
   u64 total_bytes; /* Total throughput in bytes */
 } latency_counter_t;
 
+typedef struct {
+  u64 total_dispatch_time;
+  u64 total_node_function_time;
+  u64 total_dispatch_count;
+} overhead_statistics_t;
+
 typedef struct vlib_main_t
 {
   CLIB_CACHE_LINE_ALIGN_MARK (cacheline0);
@@ -286,6 +292,9 @@ typedef struct vlib_main_t
   latency_counter_t lat_stats[MAX_LATENCY_TRACE_COUNT];
   // last time reset latency statistics
   f64 last_timestamp;
+
+  // overhead exp used statistics
+  overhead_statistics_t overhead_stats;
 } vlib_main_t;
 
 typedef struct vlib_global_main_t
