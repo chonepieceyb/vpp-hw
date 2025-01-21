@@ -1,6 +1,11 @@
+#ifndef included_vlib_pf_run_queue_h
+#define included_vlib_pf_run_queue_h
+
+#include "vppinfra/bitmap.h"
 #include "vppinfra/clib.h"
 #include "vppinfra/string.h"
 #include "vppinfra/types.h"
+#include "vppinfra/vec_bootstrap.h"
 #include <vppinfra/vec.h>
 
 #define PF_RUNQ_TYPE 0
@@ -243,4 +248,235 @@ __pf_runq_stack_enqueue ((vec))
 #define pf_runq_enq_bulk(vec, elts) \
 __pf_runq_stack_enq_bulk(vec, elts)
 
-#endif 
+#endif
+
+typedef struct
+{
+  u32 num_buckets;
+  u32 bucket_budget;
+  u64 *bucket_bitmap;
+} vlib_pf_runq_cq_header_t;
+
+typedef struct
+{
+  u32 budget;
+  void *ring;
+} vlib_pf_runq_cq_bucket_t;
+
+#define pf_runq_cq_default_budget (bucket_size)
+
+always_inline void
+__pf_runq_cq_new_inline (void **p, u32 elt_bytes, u32 num_buckets,
+			 u32 bucket_budget, u32 align)
+{
+  void *vec;
+  vlib_pf_runq_cq_bucket_t *buckets, *bucket;
+  u32 bucket_size;
+  vec_attr_t va = {
+    /* FIXME: Element size of the vector is not consistent with the type of
+       pointer to the vector */
+    .elt_sz = sizeof (vlib_pf_runq_cq_bucket_t),
+    .hdr_sz = sizeof (vlib_pf_runq_ring_header_t),
+    .align = align,
+  };
+  vlib_pf_runq_cq_header_t *header;
+
+  ASSERT ((num_buckets & (num_buckets - 1)) == 0 &&
+	  "num_buckets should be power of 2");
+
+  vec = _vec_alloc_internal (num_buckets, &va);
+  header = pf_runq_header (vec, cq);
+  bucket_size = bucket_budget; /* each element consumes 1 for now */
+
+  clib_memset (header, 0, sizeof (*header));
+  header->num_buckets = num_buckets;
+  header->bucket_budget = bucket_budget;
+  clib_bitmap_alloc (header->bucket_bitmap, num_buckets);
+
+  buckets = vec;
+  vec_foreach (bucket, buckets)
+    {
+      clib_memset (bucket, 0, sizeof (*bucket));
+      __pf_runq_ring_new_inline (&bucket->ring, elt_bytes, bucket_size, align);
+      bucket->budget = bucket_budget;
+    }
+
+  p[0] = vec;
+}
+
+always_inline void
+pf_runq_cq_new_aligned (void **p, u32 elt_bytes, u32 num_buckets,
+			u32 bucket_budget, u32 align)
+{
+  __pf_runq_cq_new_inline (p, elt_bytes, num_buckets, bucket_budget, align);
+}
+
+always_inline void
+pf_runq_cq_new (void **p, u32 elt_bytes, u32 num_buckets, u32 bucket_budget)
+{
+  __pf_runq_cq_new_inline (p, elt_bytes, num_buckets, bucket_budget, 0);
+}
+
+always_inline void
+pf_runq_cq_free (void *vec)
+{
+  vlib_pf_runq_cq_header_t *header = pf_runq_header (vec, cq);
+  vlib_pf_runq_cq_bucket_t *buckets = vec, *bucket;
+
+  vec_foreach (bucket, buckets)
+    vec_free (bucket->ring);
+
+  vec_free (header->bucket_bitmap);
+  vec_free (vec);
+}
+
+always_inline void *
+pf_runq_cq_cons (void *vec, u32 min_bucket_index)
+{
+  vlib_pf_runq_cq_header_t *header = pf_runq_header (vec, cq);
+  vlib_pf_runq_cq_bucket_t *buckets = vec, *bucket, *min_bucket;
+  u32 bucket_index, expense;
+  void *ring, *elt;
+
+  /* Passing timestamp directly also works */
+  min_bucket_index &= header->num_buckets - 1;
+
+  bucket_index =
+    clib_bitmap_next_set (header->bucket_bitmap, min_bucket_index);
+  if (bucket_index == ~0)
+    bucket_index = clib_bitmap_first_set (header->bucket_bitmap);
+
+  if (PREDICT_FALSE (bucket_index == ~0))
+    return NULL; /* calendar queue is empty */
+
+  bucket = vec_elt_at_index (buckets, bucket_index);
+  min_bucket = vec_elt_at_index (buckets, min_bucket_index);
+  ring = bucket->ring;
+  elt = __vlib_pf_runq_ring_cons (ring);
+
+  ASSERT (elt != NULL && "ring is empty while bit in bitmap is set");
+
+  if (min_bucket_index != bucket_index)
+    {
+      expense = 1; /* each element consumes 1 for now */
+      bucket->budget += expense;
+      min_bucket->budget -= expense;
+    }
+
+  if (__vlib_pf_runq_ring_empty (pf_runq_header (ring, ring)))
+    {
+      clib_bitmap_set (header->bucket_bitmap, bucket_index, 0);
+      /* FIXME: Is it the correct time to reset budget? */
+      min_bucket->budget = header->bucket_budget;
+    }
+
+  return elt;
+}
+
+always_inline void *
+__pf_runq_cq_prod (void *vec, u32 bucket_index, u32 expense)
+{
+  vlib_pf_runq_cq_header_t *header = pf_runq_header (vec, cq);
+  vlib_pf_runq_cq_bucket_t *buckets = vec, *bucket;
+
+  /* Passing timestamp directly also works */
+  bucket_index &= header->num_buckets - 1;
+  bucket = vec_elt_at_index (buckets, bucket_index);
+
+  ASSERT (expense == 1 && "expense must be 1 for now");
+
+  if (PREDICT_FALSE (bucket->budget < expense))
+    return NULL; /* budget is not enough */
+  else
+    bucket->budget -= expense;
+
+  if (PREDICT_FALSE (
+	__vlib_pf_runq_ring_empty (pf_runq_header (bucket->ring, ring))))
+    clib_bitmap_set (header->bucket_bitmap, bucket_index, 1);
+
+  return __vlib_pf_runq_ring_prod (vec_elt (buckets, bucket_index).ring);
+}
+
+always_inline void *
+pf_runq_cq_enq (void **p, u32 bucket_index, u32 expense)
+{
+  ASSERT (p != NULL && "vec is NULL");
+
+  // TODO: Re-allocate if the queue is full
+  return __pf_runq_cq_prod (*p, bucket_index, expense);
+}
+
+always_inline void
+pf_runq_cq_enq_bulk (void **p, void *elts, u32 bucket_index, u32 total_expense)
+{
+  void *vec;
+  vlib_pf_runq_cq_header_t *header;
+  vlib_pf_runq_cq_bucket_t *buckets, *bucket;
+
+  ASSERT (p != NULL && "vec is NULL");
+
+  vec = *p;
+  header = pf_runq_header (vec, cq);
+  buckets = (vlib_pf_runq_cq_bucket_t *) vec;
+
+  /* Passing timestamp directly also works */
+  bucket_index &= header->num_buckets - 1;
+  bucket = vec_elt_at_index (buckets, bucket_index);
+
+  ASSERT (total_expense == vec_len (elts) &&
+	  "total_expense must be equal to vec_len(elts) for now");
+
+  if (PREDICT_FALSE (bucket->budget < total_expense))
+    {
+      if (CLIB_DEBUG > 0)
+	clib_warning ("budget is not enough; skipping");
+      return; /* budget is not enough */
+    }
+  else
+    {
+      bucket->budget -= total_expense;
+    }
+
+  if (PREDICT_FALSE (
+	__vlib_pf_runq_ring_empty (pf_runq_header (bucket->ring, ring))))
+    clib_bitmap_set (header->bucket_bitmap, bucket_index, 1);
+
+  __pf_runq_ring_enq_bulk (&(bucket->ring), elts);
+}
+
+always_inline u32
+pf_runq_cq_len (void *vec)
+{
+  vlib_pf_runq_cq_header_t *header = pf_runq_header (vec, cq);
+  return clib_bitmap_count_set_bits (header->bucket_bitmap);
+}
+
+#define PF_PRIORITY_RUNQ_TYPE 0
+
+#if PF_PRIORITY_RUNQ_TYPE == 0
+
+#define pf_priority_runq_new_aligned(vec, size_shift, budget_shift, align)    \
+  pf_runq_cq_new_aligned ((void **) &(vec), sizeof ((vec)[0]),                \
+			  1 << (size_shift), 1 << (budget_shift), align)
+
+#define pf_priority_runq_new(vec, size_shift, budget_shift)                   \
+  pf_runq_cq_new ((void **) &(vec), sizeof ((vec)[0]), 1 << (size_shift),     \
+		  1 << (budget_shift))
+
+#define pf_priority_runq_free(vec) pf_runq_cq_free ((vec))
+
+#define pf_priority_runq_deq(vec, min_priority)                               \
+  ((typeof ((vec)[0]) *) pf_runq_cq_cons ((vec), (min_priority)))
+
+#define pf_priority_runq_len(vec) pf_runq_cq_len ((vec))
+
+#define pf_priority_runq_enq(vec, priority, expense)                          \
+  ((typeof ((vec)[0]) *) pf_runq_cq_enq ((void **) &(vec), (priority),        \
+					 (expense)))
+
+#define pf_priority_runq_enq_bulk(vec, elts, priority, total_expense)         \
+  pf_runq_cq_enq_bulk ((void **) &(vec), (elts), (priority), (total_expense))
+
+#endif /* PF_PRIORITY_RUNQ_TYPE */
+
+#endif /* included_vlib_pf_run_queue_h */
