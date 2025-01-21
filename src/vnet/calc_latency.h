@@ -35,8 +35,8 @@ static_always_inline void calc_latency (vlib_main_t *vm, vlib_buffer_t *pkt, u64
     return;
   }
 
-  // If the packet_latency is greater than the TIME_OUT_THRESHOULDER_NS, it is considered as timeout.
-  if (packet_latency > TIME_OUT_THRESHOULDER_NS) {
+  // If the packet_latency is greater than the TIME_OUT_THRESHOLDER_NS, it is considered as timeout.
+  if (packet_latency > TIME_OUT_THRESHOLDER_NS) {
     lat_stats[protocal_identifier].timeout_pkts++;
   }
 

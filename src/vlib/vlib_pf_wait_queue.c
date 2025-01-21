@@ -12,6 +12,7 @@
 #include <vlib/vlib_pf_wait_queue.h>
 #include <vppinfra/tw_timer_template.c>
 #include <vlib/vlib_pf_run_queue.h>
+#include <vlib/vlib_edf_timestamp.h>
 
 void
 process_expired_pf_cb (u32 *expired_timer_handles)
@@ -24,6 +25,9 @@ process_expired_pf_cb (u32 *expired_timer_handles)
     {
       u32 pfi = *handle; 
       vlib_pending_frame_t *pf = pool_elt_at_index(nm->pending_frames, pfi);
+      u64 max_deadline_ts = calculate_max_deadline_ts(vm, pf);
+      pf->timeout_deadline_ts = max_deadline_ts;
+
       if (pf->next_frame_index != VLIB_PENDING_FRAME_NO_NEXT_FRAME)
         {
           vlib_next_frame_t *nf = vec_elt_at_index (nm->next_frames, pf->next_frame_index);

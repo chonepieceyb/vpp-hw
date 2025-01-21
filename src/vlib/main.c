@@ -45,6 +45,7 @@
 #include <vlib/stats/stats.h>
 #include <vppinfra/tw_timer_1t_3w_1024sl_ov.h>
 #include <vlib/vlib_pf_run_queue.h>
+#include <vlib/vlib_edf_timestamp.h>
 
 #include <vlib/unix/unix.h>
 
@@ -518,7 +519,8 @@ vlib_put_next_frame (vlib_main_t * vm,
 	  p->is_timeout = 0;
 	  nf->flags |= VLIB_FRAME_PENDING;
 	  f->frame_flags |= VLIB_FRAME_PENDING;
-
+	  u64 max_deadline_ts = calculate_max_deadline_ts(vm, p);
+	  p->timeout_deadline_ts = max_deadline_ts;
 	  // add p to wait queue or run queue
 	  if (f->n_vectors >= rt->batch_size || rt->timeout_interval == 0 || vm->barrier_flush) {
 		//clib_warning("+++++++++++++vpp add to run queue+++++++++++, pf index %lu, nf index %lu", p - nm->pending_frames,  p->next_frame_index );
@@ -1733,7 +1735,7 @@ vlib_main_or_worker_loop (vlib_main_t * vm, int is_main)
 //       for (i = 0; i < _vec_len (nm->pending_frames); i++)
 // 	cpu_time_now = dispatch_pending_node (vm, i, cpu_time_now);
       i = 0;
-      u32 ths = vm->timeout_ths, cnt = 0;
+      u32 ths = vm->timeout_ths, cnt = i;
 //       while (1)
 //         {
 // 	  /* dispatch node */

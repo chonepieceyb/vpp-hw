@@ -52,7 +52,7 @@
 #include <pthread.h>
 
 // Timeout packet count thresholder, 1ms
-#define TIME_OUT_THRESHOULDER_NS 1000000
+#define TIME_OUT_THRESHOLDER_NS 1000000
 
 // maxmium number of protocol latency trace count
 #define MAX_LATENCY_TRACE_COUNT 20
@@ -108,7 +108,7 @@ clib_callback_data_typedef (vlib_node_runtime_perf_callback_set_t,
 typedef struct {
   u64 total_latency; /* Total latency of all packets between in and out vpp */
   u64 total_pkts; /* Total packets between in and out vpp */
-  u64 timeout_pkts; /* latency greater than TIME_OUT_THRESHOULDER_NS packets count */
+  u64 timeout_pkts; /* latency greater than TIME_OUT_THRESHOLDER_NS packets count */
   u64 total_bytes; /* Total throughput in bytes */
 } latency_counter_t;
 

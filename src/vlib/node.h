@@ -478,6 +478,9 @@ typedef struct
   /* start time create this pending frame */
   u64 dispatch_start_clock;
 
+  // pf中所有包最大的超时截止时间戳，如果为0则认为其无DDL限制
+  u64 timeout_deadline_ts;
+
   /* Special value for next_frame_index when there is no next frame. */
 #define VLIB_PENDING_FRAME_NO_NEXT_FRAME ((u32) ~0)
 } vlib_pending_frame_t;
