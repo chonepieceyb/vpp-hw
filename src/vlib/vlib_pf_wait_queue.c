@@ -19,7 +19,7 @@ process_expired_pf_cb (u32 *expired_timer_handles)
 {
   vlib_main_t *vm = vlib_get_main ();
   vlib_node_main_t *nm = &vm->node_main;
-  u32 *handle;
+  u32 *handle, *elt;
 
   vec_foreach (handle, expired_timer_handles)
     {
@@ -35,6 +35,11 @@ process_expired_pf_cb (u32 *expired_timer_handles)
           //clib_warning("++++++++++++vpp timeouts+++++++++++,  pf index %lu, node runtime index %lu,  time %.6f ++++++++++++++,", pfi, pf->node_runtime_index, vlib_time_now(vm));
         }
       pf->is_timeout = 1;
+
+      elt = vlib_node_main_pf_runq_enqueue (nm, max_deadline_ts);
+      if (elt)
+	*elt = pfi;
+      else /* run queue is full, invoke early rejection */
+	barrier_flush_all_pending_frames (vm);
     }
-  pf_runq_enq_bulk (nm->pf_runq, expired_timer_handles);
 }

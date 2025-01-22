@@ -486,6 +486,8 @@ vlib_node_runtime_perf_counter (vlib_main_t * vm, vlib_node_runtime_t * node,
 
 void barrier_flush_pending_frames(vlib_main_t *vm);
 
+void barrier_flush_all_pending_frames (vlib_main_t *vm);
+
 always_inline void vlib_set_queue_signal_callback
   (vlib_main_t * vm, void (*fp) (vlib_main_t *))
 {

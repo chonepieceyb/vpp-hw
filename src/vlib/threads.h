@@ -341,7 +341,8 @@ vlib_worker_thread_barrier_check (void)
       u32 thread_index = vm->thread_index;
       f64 t = vlib_time_now (vm);
 
-     barrier_flush_pending_frames(vm);
+      /* Run queue is empty, so there is no need to flush run queue at first */
+      barrier_flush_pending_frames (vm);
 
       if (PREDICT_FALSE (vec_len (vm->barrier_perf_callbacks) != 0))
 	clib_call_callbacks (vm->barrier_perf_callbacks, vm,

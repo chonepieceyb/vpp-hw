@@ -252,7 +252,7 @@ __pf_runq_stack_enq_bulk(vec, elts)
 
 typedef struct
 {
-  u32 num_buckets;
+  u64 num_buckets;
   u32 bucket_budget;
   u64 *bucket_bitmap;
 } vlib_pf_runq_cq_header_t;
@@ -266,15 +266,15 @@ typedef struct
 #define pf_runq_cq_default_budget (bucket_size)
 
 always_inline void
-__pf_runq_cq_new_inline (void **p, u32 elt_bytes, u32 num_buckets,
+__pf_runq_cq_new_inline (void **p, u32 elt_bytes, u64 num_buckets,
 			 u32 bucket_budget, u32 align)
 {
   void *vec;
   vlib_pf_runq_cq_bucket_t *buckets, *bucket;
   u32 bucket_size;
   vec_attr_t va = {
-    /* FIXME: Element size of the vector is not consistent with the type of
-       pointer to the vector */
+    /* FIXME: Element size of the vector does not match the type of
+       pointer to the vector; random access is prohibited */
     .elt_sz = sizeof (vlib_pf_runq_cq_bucket_t),
     .hdr_sz = sizeof (vlib_pf_runq_ring_header_t),
     .align = align,
@@ -305,14 +305,14 @@ __pf_runq_cq_new_inline (void **p, u32 elt_bytes, u32 num_buckets,
 }
 
 always_inline void
-pf_runq_cq_new_aligned (void **p, u32 elt_bytes, u32 num_buckets,
+pf_runq_cq_new_aligned (void **p, u32 elt_bytes, u64 num_buckets,
 			u32 bucket_budget, u32 align)
 {
   __pf_runq_cq_new_inline (p, elt_bytes, num_buckets, bucket_budget, align);
 }
 
 always_inline void
-pf_runq_cq_new (void **p, u32 elt_bytes, u32 num_buckets, u32 bucket_budget)
+pf_runq_cq_new (void **p, u32 elt_bytes, u64 num_buckets, u32 bucket_budget)
 {
   __pf_runq_cq_new_inline (p, elt_bytes, num_buckets, bucket_budget, 0);
 }
@@ -331,11 +331,12 @@ pf_runq_cq_free (void *vec)
 }
 
 always_inline void *
-pf_runq_cq_cons (void *vec, u32 min_bucket_index)
+pf_runq_cq_cons (void *vec, u64 min_bucket_index)
 {
   vlib_pf_runq_cq_header_t *header = pf_runq_header (vec, cq);
   vlib_pf_runq_cq_bucket_t *buckets = vec, *bucket, *min_bucket;
-  u32 bucket_index, expense;
+  u64 bucket_index;
+  u32 expense;
   void *ring, *elt;
 
   /* Passing timestamp directly also works */
@@ -374,7 +375,7 @@ pf_runq_cq_cons (void *vec, u32 min_bucket_index)
 }
 
 always_inline void *
-__pf_runq_cq_prod (void *vec, u32 bucket_index, u32 expense)
+__pf_runq_cq_prod (void *vec, u64 bucket_index, u32 expense)
 {
   vlib_pf_runq_cq_header_t *header = pf_runq_header (vec, cq);
   vlib_pf_runq_cq_bucket_t *buckets = vec, *bucket;
@@ -398,7 +399,7 @@ __pf_runq_cq_prod (void *vec, u32 bucket_index, u32 expense)
 }
 
 always_inline void *
-pf_runq_cq_enq (void **p, u32 bucket_index, u32 expense)
+pf_runq_cq_enq (void **p, u64 bucket_index, u32 expense)
 {
   ASSERT (p != NULL && "vec is NULL");
 
@@ -407,7 +408,7 @@ pf_runq_cq_enq (void **p, u32 bucket_index, u32 expense)
 }
 
 always_inline void
-pf_runq_cq_enq_bulk (void **p, void *elts, u32 bucket_index, u32 total_expense)
+pf_runq_cq_enq_bulk (void **p, void *elts, u64 bucket_index, u32 total_expense)
 {
   void *vec;
   vlib_pf_runq_cq_header_t *header;
@@ -448,7 +449,9 @@ always_inline u32
 pf_runq_cq_len (void *vec)
 {
   vlib_pf_runq_cq_header_t *header = pf_runq_header (vec, cq);
-  return clib_bitmap_count_set_bits (header->bucket_bitmap);
+
+  /* FIXME: This function returns 0/1 instead of the actual size */
+  return clib_bitmap_first_set (header->bucket_bitmap) != ~0;
 }
 
 #define PF_PRIORITY_RUNQ_TYPE 0

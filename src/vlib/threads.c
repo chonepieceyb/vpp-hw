@@ -677,15 +677,13 @@ start_workers (vlib_main_t * vm)
 
 	      nm_clone->pending_frames = 0;
 	      nm_clone->pf_waitq = 0;
-	      nm_clone->pf_runq = 0;
-              pool_alloc(nm_clone->pending_frames, 128);
+	      pool_alloc(nm_clone->pending_frames, 128);
               pool_validate(nm_clone->pending_frames);
         //       vec_validate(nm_clone->pf_runq, 32);
         //       vec_set_len(nm_clone->pf_runq, 0);
-	      pf_runq_new(nm_clone->pf_runq, 5);
-	      
-              nm_clone->pf_waitq = clib_mem_alloc_aligned (sizeof (tw_timer_wheel_pf_waitq_t),
-                        CLIB_CACHE_LINE_BYTES);
+	      vlib_node_main_pf_runq_init (nm_clone);
+	      nm_clone->pf_waitq = clib_mem_alloc_aligned (
+		sizeof (tw_timer_wheel_pf_waitq_t), CLIB_CACHE_LINE_BYTES);
 
                 /* Create the pf waiting queue timing wheel */
               tw_timer_wheel_init_pf_waitq(
