@@ -689,6 +689,41 @@ VLIB_CLI_COMMAND (set_dpdk_if_batchsize, static) = {
     .function = set_dpdk_if_batchsize_fn,
 };
 
+// show mvpp overhead and reset statistics
+static clib_error_t *
+show_dpdk_remaining_pkt_and_reset_fn (vlib_main_t * vm,
+			      unformat_input_t * input,
+			      vlib_cli_command_t * cmd)
+{
+  vlib_thread_main_t *tm = vlib_get_thread_main ();
+  clib_error_t *error = NULL;
+  int i;
+  vlib_worker_thread_barrier_sync (vm);
+  for (i = 1; i < tm->n_vlib_mains; i++) {
+    vlib_main_t *curr_vm = vlib_get_main_by_index(i);
+    u64 avg_remaining_pkts;
+    if (curr_vm->remaining_count == 0) {
+      avg_remaining_pkts = 0;
+    } else {
+      avg_remaining_pkts = curr_vm->remaining_packets / curr_vm->remaining_count;
+    }
+    vlib_cli_output (vm, "remaining_packets: %lu, remaining_count: %lu, avg_remaining_pkts: %lu",
+                      curr_vm->remaining_packets, curr_vm->remaining_count, avg_remaining_pkts);
+    curr_vm->remaining_packets = 0;
+    curr_vm->remaining_count = 0;
+  }
+  vlib_worker_thread_barrier_release (vm);
+  return error;
+}
+/* *INDENT-OFF* */
+VLIB_CLI_COMMAND (show_dpdk_remaining_pkt_and_reset, static) = {
+  .path = "dpdk remaining show",
+  .short_help = "dpdk remaining show",
+  .function = show_dpdk_remaining_pkt_and_reset_fn,
+};
+/* *INDENT-ON* */
+
+
 /* Dummy function to get us linked in. */
 void
 dpdk_cli_reference (void)

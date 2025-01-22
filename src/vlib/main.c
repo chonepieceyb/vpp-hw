@@ -1733,7 +1733,7 @@ vlib_main_or_worker_loop (vlib_main_t * vm, int is_main)
 //       for (i = 0; i < _vec_len (nm->pending_frames); i++)
 // 	cpu_time_now = dispatch_pending_node (vm, i, cpu_time_now);
       i = 0;
-      u32 ths = vm->timeout_ths, cnt = 0;
+      u32 ths = vm->timeout_ths, cnt = i;
 //       while (1)
 //         {
 // 	  /* dispatch node */
@@ -1753,6 +1753,15 @@ vlib_main_or_worker_loop (vlib_main_t * vm, int is_main)
 //         }
       while (1)
         {
+          // 遍历当前所有的pending_frames，记录所有包的个数和大小
+          vlib_pending_frame_t *p;
+          u64 remaining_packets = 0;
+          pool_foreach(p, nm->pending_frames)
+            {
+              remaining_packets += p->frame->n_vectors;
+            }
+          vm->remaining_packets += remaining_packets;
+          vm->remaining_count++;
 	  /* dispatch node */
 	  u32 *pf_elt;
 	  cpu_time_now = clib_cpu_time_now ();

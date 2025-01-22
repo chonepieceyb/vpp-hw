@@ -286,6 +286,10 @@ typedef struct vlib_main_t
   latency_counter_t lat_stats[MAX_LATENCY_TRACE_COUNT];
   // last time reset latency statistics
   f64 last_timestamp;
+
+  // remaining packet
+  u64 remaining_packets;
+  u64 remaining_count;
 } vlib_main_t;
 
 typedef struct vlib_global_main_t
