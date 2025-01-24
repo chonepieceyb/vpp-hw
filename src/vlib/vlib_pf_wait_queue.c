@@ -38,8 +38,27 @@ process_expired_pf_cb (u32 *expired_timer_handles)
 
       elt = vlib_node_main_pf_runq_enqueue (nm, max_deadline_ts);
       if (elt)
-	*elt = pfi;
-      else /* run queue is full, invoke early rejection */
-	barrier_flush_all_pending_frames (vm);
+	{
+	  *elt = pfi;
+	}
+      else
+	{
+	  /* Run queue is full, invoke early rejection */
+	  barrier_flush_all_pending_frames (vm);
+
+#if VLIB_NODE_MAIN_PF_RUNQ_TRACE
+	  ELOG_TYPE_DECLARE (e) = {
+	    .format = "process_expired_pf_cb: early rejection %d",
+	    .format_args = "i8",
+	  };
+
+	  struct
+	  {
+	    u64 early_rejection_count;
+	  } *ed;
+	  ed = ELOG_DATA (vlib_get_elog_main (), e);
+	  ed->early_rejection_count += 1;
+#endif
+	}
     }
 }

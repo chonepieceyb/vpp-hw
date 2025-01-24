@@ -539,10 +539,28 @@ vlib_put_next_frame (vlib_main_t * vm,
 	      elt =
 		vlib_node_main_pf_runq_enqueue (nm, p->timeout_deadline_ts);
 	      if (elt)
+	      {
 		*elt = p - nm->pending_frames;
+	      }
 	      else
+	      {
 		/* Invoke early rejection */
 		barrier_flush_all_pending_frames (vm);
+
+#if VLIB_NODE_MAIN_PF_RUNQ_TRACE
+		ELOG_TYPE_DECLARE (e) = {
+		  .format = "vlib_put_next_frame: early rejection %d",
+		  .format_args = "i8",
+		};
+
+		struct
+		{
+		  u64 early_rejection_count;
+		} *ed;
+		ed = ELOG_DATA (vlib_get_elog_main (), e);
+		ed->early_rejection_count += 1;
+#endif
+	      }
 	      nf->stop_timer_handler = ~0;
 	  } else {
 		f64 now = vlib_time_now(vm);
