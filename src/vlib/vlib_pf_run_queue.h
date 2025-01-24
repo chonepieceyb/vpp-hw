@@ -361,7 +361,8 @@ pf_runq_cq_cons (void *vec, u64 min_bucket_index)
     {
       expense = 1; /* each element consumes 1 for now */
       bucket->budget += expense;
-      min_bucket->budget -= expense;
+      if (min_bucket->budget >= expense)
+	min_bucket->budget -= expense;
     }
 
   if (__vlib_pf_runq_ring_empty (pf_runq_header (ring, ring)))

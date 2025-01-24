@@ -749,19 +749,21 @@ typedef struct
   u32 *pf_priority_runq;
 
   /* Number of buckets in `pf_priority_runq`. */
-#define VLIB_NODE_MAIN_PF_PRIORITY_RUNQ_SIZE_SHIFT 5
+#define VLIB_NODE_MAIN_PF_PRIORITY_RUNQ_SIZE_SHIFT 11
 #define VLIB_NODE_MAIN_PF_PRIORITY_RUNQ_SIZE                                  \
   (1 << VLIB_NODE_MAIN_PF_PRIORITY_RUNQ_SIZE_SHIFT)
 
   /* Time slot of each bucket in `pf_priority_runq`. */
-#define VLIB_NODE_MAIN_PF_PRIORITY_RUNQ_TIME_SLOT_SHIFT 12
+#define VLIB_NODE_MAIN_PF_PRIORITY_RUNQ_TIME_SLOT_SHIFT 10
 #define VLIB_NODE_MAIN_PF_PRIORITY_RUNQ_TIME_SLOT                             \
   (1 << VLIB_NODE_MAIN_PF_PRIORITY_RUNQ_TIME_SLOT_SHIFT)
 
   /* Budget (i.e. size) of each bucket in `pf_priority_runq`. */
-#define VLIB_NODE_MAIN_PF_PRIORITY_RUNQ_BUDGET_SHIFT 3
+#define VLIB_NODE_MAIN_PF_PRIORITY_RUNQ_BUDGET_SHIFT 6
 #define VLIB_NODE_MAIN_PF_PRIORITY_RUNQ_BUDGET                                \
   (1 << VLIB_NODE_MAIN_PF_PRIORITY_RUNQ_BUDGET_SHIFT)
+
+#define VLIB_NODE_MAIN_PF_RUNQ_TRACE 1
 
   /* run queue of pending_frames to be dispatched. */
   u32 *pf_runq;

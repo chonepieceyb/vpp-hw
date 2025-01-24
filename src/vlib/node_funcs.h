@@ -45,11 +45,13 @@
 #ifndef included_vlib_node_funcs_h
 #define included_vlib_node_funcs_h
 
+#include <vppinfra/elog.h>
 #include <vppinfra/clib.h>
 #include <vppinfra/fifo.h>
 #include <vppinfra/tw_timer_1t_3w_1024sl_ov.h>
 #include <vppinfra/interrupt.h>
 #include <vlib/node.h>
+#include <vlib/global_funcs.h>
 #include <vlib/vlib_pf_run_queue.h>
 
 #ifdef CLIB_SANITIZE_ADDR
@@ -1549,11 +1551,34 @@ vlib_node_main_pf_runq_enqueue (vlib_node_main_t *nm, u64 deadline)
   u64 priority;
   u32 expense;
 
+#if VLIB_NODE_MAIN_PF_RUNQ_TRACE
+  ELOG_TYPE_DECLARE (e) = {
+    .format = "pf_runq_enqueue: to priority runq %d, to runq %d",
+    .format_args = "i8i8",
+  };
+
+  struct
+  {
+    u64 priority_runq_count;
+    u64 runq_count;
+  } *ed;
+  ed = ELOG_DATA (vlib_get_elog_main (), e);
+#endif /* VLIB_NODE_MAIN_PF_RUNQ_TRACE */
+
   if (deadline == 0)
-    return pf_runq_enq (nm->pf_runq);
+    {
+#if VLIB_NODE_MAIN_PF_RUNQ_TRACE
+      ed->runq_count += 1;
+#endif
+      return pf_runq_enq (nm->pf_runq);
+    }
 
   priority = deadline >> VLIB_NODE_MAIN_PF_PRIORITY_RUNQ_TIME_SLOT_SHIFT;
   expense = 1; /* each PF consumes 1 for now */
+
+#if VLIB_NODE_MAIN_PF_RUNQ_TRACE
+  ed->priority_runq_count += 1;
+#endif
   return pf_priority_runq_enq (nm->pf_priority_runq, priority, expense);
 }
 
@@ -1562,13 +1587,42 @@ vlib_node_main_pf_runq_dequeue (vlib_node_main_t *nm, u64 timestamp)
 {
   u32 *elt;
 
+#if VLIB_NODE_MAIN_PF_RUNQ_TRACE
+  ELOG_TYPE_DECLARE (e) = {
+    .format =
+      "pf_runq_dequeue: from priority runq %d, from runq %d, failed %d",
+    .format_args = "i8i8i8",
+  };
+
+  struct
+  {
+    u64 priority_runq_count;
+    u64 runq_count;
+    u64 failed_count;
+  } *ed;
+  ed = ELOG_DATA (vlib_get_elog_main (), e);
+#endif
+
   timestamp >>= VLIB_NODE_MAIN_PF_PRIORITY_RUNQ_TIME_SLOT_SHIFT;
 
   elt = pf_priority_runq_deq (nm->pf_priority_runq, timestamp);
   if (elt)
-    return elt;
+    {
+#if VLIB_NODE_MAIN_PF_RUNQ_TRACE
+      ed->priority_runq_count += 1;
+#endif
+      return elt;
+    }
 
-  return pf_runq_deq (nm->pf_runq);
+  elt = pf_runq_deq (nm->pf_runq);
+#if VLIB_NODE_MAIN_PF_RUNQ_TRACE
+  if (elt)
+      ed->runq_count += 1;
+  else
+      ed->failed_count += 1;
+#endif
+
+  return elt;
 }
 
 static_always_inline int
