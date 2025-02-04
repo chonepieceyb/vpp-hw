@@ -1,0 +1,4 @@
+root = true
+
+[*.{c,cc,cpp,c++,h,hpp}]
+tab_width = 8
