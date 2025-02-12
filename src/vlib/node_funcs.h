@@ -52,7 +52,7 @@
 #include <vppinfra/interrupt.h>
 #include <vlib/node.h>
 #include <vlib/global_funcs.h>
-#include <vlib/vlib_pf_run_queue.h>
+// #include <vlib/vlib_pf_run_queue.h>
 
 #ifdef CLIB_SANITIZE_ADDR
 #include <sanitizer/asan_interface.h>
@@ -1526,71 +1526,6 @@ vlib_frame_bitmap_find_first_set (uword *bmp)
 					get_lowest_set_bit_index (v[_off]));  \
 	 _tmp; i = _off * uword_bits + get_lowest_set_bit_index (             \
 					 _tmp = clear_lowest_set_bit (_tmp)))
-
-static_always_inline void
-vlib_node_main_pf_runq_init (vlib_node_main_t *nm)
-{
-  nm->pf_priority_runq = nm->pf_runq = 0;
-
-  pf_priority_runq_new (nm->pf_priority_runq,
-			VLIB_NODE_MAIN_PF_PRIORITY_RUNQ_SIZE_SHIFT,
-			VLIB_NODE_MAIN_PF_PRIORITY_RUNQ_BUDGET_SHIFT);
-  pf_runq_new (nm->pf_runq, VLIB_NODE_MAIN_PF_RUNQ_SIZE_SHIFT);
-}
-
-static_always_inline void
-vlib_node_main_pf_runq_destroy (vlib_node_main_t *nm)
-{
-  pf_priority_runq_free (nm->pf_priority_runq);
-  pf_runq_free (nm->pf_runq);
-}
-
-static_always_inline u32 *
-vlib_node_main_pf_runq_enqueue (vlib_node_main_t *nm, u64 timestamp,
-				u64 deadline)
-{
-  u64 priority, current_priority;
-  u32 expense, *elt;
-
-  if (deadline == 0)
-    return pf_runq_enq (nm->pf_runq);
-
-  current_priority =
-    timestamp >> VLIB_NODE_MAIN_PF_PRIORITY_RUNQ_TIME_SLOT_SHIFT;
-  priority = deadline >> VLIB_NODE_MAIN_PF_PRIORITY_RUNQ_TIME_SLOT_SHIFT;
-  expense = 1; /* each PF consumes 1 for now */
-
-  elt = pf_priority_runq_enq (nm->pf_priority_runq, current_priority, priority,
-			      expense);
-  ASSERT (elt);
-
-  return elt;
-}
-
-static_always_inline u32 *
-vlib_node_main_pf_runq_dequeue (vlib_node_main_t *nm, u64 timestamp)
-{
-  u32 *elt;
-
-  timestamp >>= VLIB_NODE_MAIN_PF_PRIORITY_RUNQ_TIME_SLOT_SHIFT;
-
-  elt = pf_priority_runq_deq (nm->pf_priority_runq, timestamp);
-  if (elt)
-    return elt;
-
-  elt = pf_runq_deq (nm->pf_runq);
-  if (CLIB_DEBUG > 0 && PREDICT_FALSE (!elt))
-    clib_warning ("pf_runq_deq returned NULL");
-
-  return elt;
-}
-
-static_always_inline int
-vlib_node_main_pf_runq_empty (vlib_node_main_t *nm)
-{
-  return pf_priority_runq_len (nm->pf_priority_runq) == 0 &&
-	 pf_runq_len (nm->pf_runq) == 0;
-}
 
 #endif /* included_vlib_node_funcs_h */
 
