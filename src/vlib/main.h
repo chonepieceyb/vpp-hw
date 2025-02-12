@@ -51,8 +51,8 @@
 
 #include <pthread.h>
 
-// Timeout packet count thresholder, 1ms
-#define TIME_OUT_THRESHOLDER_NS 1000000
+// Timeout packet count thresholder, 2ms
+#define TIME_OUT_THRESHOLDER_NS 2000000
 
 // maxmium number of protocol latency trace count
 #define MAX_LATENCY_TRACE_COUNT 20
