@@ -763,8 +763,6 @@ typedef struct
 #define VLIB_NODE_MAIN_PF_PRIORITY_RUNQ_BUDGET                                \
   (1 << VLIB_NODE_MAIN_PF_PRIORITY_RUNQ_BUDGET_SHIFT)
 
-#define VLIB_NODE_MAIN_PF_RUNQ_TRACE 1
-
   /* run queue of pending_frames to be dispatched. */
   u32 *pf_runq;
 

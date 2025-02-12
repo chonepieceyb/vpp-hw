@@ -1546,40 +1546,25 @@ vlib_node_main_pf_runq_destroy (vlib_node_main_t *nm)
 }
 
 static_always_inline u32 *
-vlib_node_main_pf_runq_enqueue (vlib_node_main_t *nm, u64 deadline)
+vlib_node_main_pf_runq_enqueue (vlib_node_main_t *nm, u64 timestamp,
+				u64 deadline)
 {
-  u64 priority;
-  u32 expense;
-
-#if VLIB_NODE_MAIN_PF_RUNQ_TRACE
-  ELOG_TYPE_DECLARE (e) = {
-    .format = "pf_runq_enqueue: to priority runq %d, to runq %d",
-    .format_args = "i8i8",
-  };
-
-  struct
-  {
-    u64 priority_runq_count;
-    u64 runq_count;
-  } *ed;
-  ed = ELOG_DATA (vlib_get_elog_main (), e);
-#endif /* VLIB_NODE_MAIN_PF_RUNQ_TRACE */
+  u64 priority, current_priority;
+  u32 expense, *elt;
 
   if (deadline == 0)
-    {
-#if VLIB_NODE_MAIN_PF_RUNQ_TRACE
-      ed->runq_count += 1;
-#endif
-      return pf_runq_enq (nm->pf_runq);
-    }
+    return pf_runq_enq (nm->pf_runq);
 
+  current_priority =
+    timestamp >> VLIB_NODE_MAIN_PF_PRIORITY_RUNQ_TIME_SLOT_SHIFT;
   priority = deadline >> VLIB_NODE_MAIN_PF_PRIORITY_RUNQ_TIME_SLOT_SHIFT;
   expense = 1; /* each PF consumes 1 for now */
 
-#if VLIB_NODE_MAIN_PF_RUNQ_TRACE
-  ed->priority_runq_count += 1;
-#endif
-  return pf_priority_runq_enq (nm->pf_priority_runq, priority, expense);
+  elt = pf_priority_runq_enq (nm->pf_priority_runq, current_priority, priority,
+			      expense);
+  ASSERT (elt);
+
+  return elt;
 }
 
 static_always_inline u32 *
@@ -1587,40 +1572,15 @@ vlib_node_main_pf_runq_dequeue (vlib_node_main_t *nm, u64 timestamp)
 {
   u32 *elt;
 
-#if VLIB_NODE_MAIN_PF_RUNQ_TRACE
-  ELOG_TYPE_DECLARE (e) = {
-    .format =
-      "pf_runq_dequeue: from priority runq %d, from runq %d, failed %d",
-    .format_args = "i8i8i8",
-  };
-
-  struct
-  {
-    u64 priority_runq_count;
-    u64 runq_count;
-    u64 failed_count;
-  } *ed;
-  ed = ELOG_DATA (vlib_get_elog_main (), e);
-#endif
-
   timestamp >>= VLIB_NODE_MAIN_PF_PRIORITY_RUNQ_TIME_SLOT_SHIFT;
 
   elt = pf_priority_runq_deq (nm->pf_priority_runq, timestamp);
   if (elt)
-    {
-#if VLIB_NODE_MAIN_PF_RUNQ_TRACE
-      ed->priority_runq_count += 1;
-#endif
-      return elt;
-    }
+    return elt;
 
   elt = pf_runq_deq (nm->pf_runq);
-#if VLIB_NODE_MAIN_PF_RUNQ_TRACE
-  if (elt)
-      ed->runq_count += 1;
-  else
-      ed->failed_count += 1;
-#endif
+  if (CLIB_DEBUG > 0 && PREDICT_FALSE (!elt))
+    clib_warning ("pf_runq_deq returned NULL");
 
   return elt;
 }

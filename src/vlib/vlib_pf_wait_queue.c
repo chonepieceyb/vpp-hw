@@ -19,7 +19,7 @@ process_expired_pf_cb (u32 *expired_timer_handles)
 {
   vlib_main_t *vm = vlib_get_main ();
   vlib_node_main_t *nm = &vm->node_main;
-  u32 *handle, *elt;
+  u32 *handle;
 
   vec_foreach (handle, expired_timer_handles)
     {
@@ -36,29 +36,15 @@ process_expired_pf_cb (u32 *expired_timer_handles)
         }
       pf->is_timeout = 1;
 
-      elt = vlib_node_main_pf_runq_enqueue (nm, max_deadline_ts);
-      if (elt)
+      *vlib_node_main_pf_runq_enqueue (nm, (u64) vlib_time_now (vm),
+				       max_deadline_ts) = pfi;
+      if (PREDICT_FALSE (errno == ENOSPC))
 	{
-	  *elt = pfi;
-	}
-      else
-	{
-	  /* Run queue is full, invoke early rejection */
+	  if (CLIB_DEBUG > 0)
+	    clib_warning (
+	      "enqueue PF to runq failed: %d; invoking early rejection",
+	      errno);
 	  barrier_flush_all_pending_frames (vm);
-
-#if VLIB_NODE_MAIN_PF_RUNQ_TRACE
-	  ELOG_TYPE_DECLARE (e) = {
-	    .format = "process_expired_pf_cb: early rejection %d",
-	    .format_args = "i8",
-	  };
-
-	  struct
-	  {
-	    u64 early_rejection_count;
-	  } *ed;
-	  ed = ELOG_DATA (vlib_get_elog_main (), e);
-	  ed->early_rejection_count += 1;
-#endif
 	}
     }
 }
