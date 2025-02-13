@@ -1356,7 +1356,7 @@ __barrier_flush_pending_frames (vlib_main_t *vm, int flush_runq)
 void
 barrier_flush_pending_frames (vlib_main_t *vm)
 {
-  __barrier_flush_pending_frames (vm, 0);
+  __barrier_flush_pending_frames (vm, 1);
 }
 
 void
