@@ -352,7 +352,6 @@ vlib_get_next_frame_internal (vlib_main_t *vm, vlib_node_runtime_t *node,
   vlib_next_frame_t *nf;
   vlib_node_runtime_t *rt;
   u32 n_used;
-  u64 timestamp;
 
   nf = vlib_node_runtime_get_next_frame (vm, node, next_index);
   rt = vlib_next_frame_get_node_runtime (vm, nf);
@@ -405,21 +404,25 @@ vlib_get_next_frame_internal (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  tw_timer_pf_waitq_t *pf_timer = pool_elt_at_index (
 	    ((tw_timer_wheel_pf_waitq_t *) nm->pf_waitq)->timers,
 	    nf->stop_timer_handler);
-	  timestamp = (u64) vlib_time_now (vm);
-	  // vec_add1 (nm->pf_runq, pf_timer->user_handle);
+
 	  *vlib_node_main_pf_runq_enqueue (
-	    nm, timestamp,
-	    vec_elt (nm->pending_frames, pf_timer->user_handle)
-	      .timeout_deadline_ts) = pf_timer->user_handle;
-	  if (CLIB_DEBUG > 0 && PREDICT_FALSE (errno))
-	    clib_warning (
-	      "enqueue PF to run queue failed or completed with warnings: %d",
-	      errno);
+	    nm, vec_elt (nm->pending_frames, pf_timer->user_handle).timeout_deadline_ts) 
+	      = pf_timer->user_handle;
+	  int __errno = errno;
+          tw_timer_stop_pf_waitq (nm->pf_waitq, nf->stop_timer_handler);
+	  nf->stop_timer_handler = ~0;
+	  if (PREDICT_FALSE (vm->barrier_flush == 0 && __errno == ENOSPC))
+		{
+			if (CLIB_DEBUG > 0)
+			clib_warning ("enqueue PF to runq failed: %d; invoking "
+					"early rejection",
+					__errno);
+			vm->should_barrier_flush = 1;
+		}
 	  // clib_warning("++++++++++++ vpp move full frame from wait queue to
 	  // runq, stop_timer_handler %u, user handler %u",
 	  // nf->stop_timer_handler, pf_timer->user_handle);
-	  tw_timer_stop_pf_waitq (nm->pf_waitq, nf->stop_timer_handler);
-	  nf->stop_timer_handler = ~0;
+
 	}
     }
 
@@ -482,7 +485,6 @@ vlib_put_next_frame (vlib_main_t *vm, vlib_node_runtime_t *r, u32 next_index,
   vlib_frame_t *f;
   vlib_node_runtime_t *rt;
   u32 n_vectors_in_frame;
-  u64 timestamp;
 
   if (CLIB_DEBUG > 0)
     vlib_put_next_frame_validate (vm, r, next_index, n_vectors_left);
@@ -520,7 +522,6 @@ vlib_put_next_frame (vlib_main_t *vm, vlib_node_runtime_t *r, u32 next_index,
 	  __attribute__ ((unused)) vlib_node_t *node;
 
 	  node = vlib_get_node (vm, r->node_index);
-	  timestamp = (u64) vlib_time_now (vm);
 
 	  // vec_add2 (nm->pending_frames, p, 1);
 
@@ -542,16 +543,16 @@ vlib_put_next_frame (vlib_main_t *vm, vlib_node_runtime_t *r, u32 next_index,
 	      // index %lu, nf index %lu", p - nm->pending_frames,
 	      // p->next_frame_index ); vec_add1(nm->pf_runq, p -
 	      // nm->pending_frames);
-	      *vlib_node_main_pf_runq_enqueue (nm, timestamp,
-					       p->timeout_deadline_ts) =
+	      *vlib_node_main_pf_runq_enqueue (nm, p->timeout_deadline_ts) =
 		p - nm->pending_frames;
-	      if (PREDICT_FALSE (errno == ENOSPC))
+	      if (PREDICT_FALSE (vm->barrier_flush == 0 && errno == ENOSPC))
 		{
 		  if (CLIB_DEBUG > 0)
 		    clib_warning ("enqueue PF to runq failed: %d; invoking "
 				  "early rejection",
 				  errno);
-		  barrier_flush_all_pending_frames (vm);
+		  //barrier_flush_all_pending_frames (vm);
+		  vm->should_barrier_flush = 1;
 		}
 	      nf->stop_timer_handler = ~0;
 	    }
@@ -1191,11 +1192,6 @@ dispatch_pending_node (vlib_main_t *vm, uword pending_frame_index,
   else
     {
       nf = vec_elt_at_index (nm->next_frames, p->next_frame_index);
-      if (vm->barrier_flush && nf->stop_timer_handler != ~0)
-	{
-	  tw_timer_stop_pf_waitq (nm->pf_waitq, nf->stop_timer_handler);
-	  nf->stop_timer_handler = ~0;
-	}
     }
 
   ASSERT (f->frame_flags & VLIB_FRAME_IS_ALLOCATED);
@@ -1306,8 +1302,13 @@ __barrier_flush_pending_frames (vlib_main_t *vm, int flush_runq)
 {
 
   vlib_node_main_t *nm = &vm->node_main;
-  u64 cpu_time_now, timestamp;
+  u64 cpu_time_now;
   u32 *pf_elt;
+  vlib_pending_frame_t *pf;
+  uword i;
+  u32 *expire_pfs = NULL;
+  vec_resize (expire_pfs, 32);
+  vec_set_len (expire_pfs, 0);
 
   vm->barrier_flush = 1;
 
@@ -1318,52 +1319,69 @@ __barrier_flush_pending_frames (vlib_main_t *vm, int flush_runq)
       return;
     }
 
-  tw_timer_pf_waitq_t *pf_timer;
   cpu_time_now = clib_cpu_time_now ();
-  timestamp = (u64) vlib_time_now (vm);
-
-  if (flush_runq)
-    while ((pf_elt = vlib_node_main_pf_runq_dequeue (nm, timestamp)) != NULL)
-      {
-	cpu_time_now = dispatch_pending_node (vm, *pf_elt, cpu_time_now);
-	timestamp = (u64) vlib_time_now (vm);
+  if (flush_runq) {
+	while ((pf_elt = vlib_node_main_pf_runq_dequeue (nm, expire_pfs)) != NULL)
+          {
+	      if (PREDICT_TRUE(pf_elt != expire_pfs)) {
+		cpu_time_now = dispatch_pending_node (vm, *pf_elt, cpu_time_now);
+	      } else {
+		for (i = 0; i < _vec_len (expire_pfs); i++) {
+		   cpu_time_now = dispatch_pending_node (vm, expire_pfs[i], cpu_time_now);
+		}
+		vec_set_len(expire_pfs, 0);
+	      }
+	  }
+  }
+  ASSERT(vlib_node_main_pf_runq_empty(nm));
+  /* all pending frames in pool is in waitq*/
+  pool_foreach (pf, nm->pending_frames)
+    {
+      /*stop timer first*/
+      if (pf->next_frame_index != VLIB_PENDING_FRAME_NO_NEXT_FRAME) {
+	vlib_next_frame_t *nf = vec_elt_at_index (nm->next_frames, pf->next_frame_index);
+	// ASSERT(nf->stop_timer_handler != ~0 && "barrier flushing, pending_frames stop_timer_handler is ~0");
+	if (PREDICT_TRUE(nf->stop_timer_handler != ~0)) {
+	  tw_timer_stop_pf_waitq (nm->pf_waitq, nf->stop_timer_handler);
+          nf->stop_timer_handler = ~0;
+	}	
       }
-
-  pool_foreach (pf_timer, ((tw_timer_wheel_pf_waitq_t *) nm->pf_waitq)->timers)
-    {
-      if (pf_timer->user_handle != ~0)
-	{
-	  cpu_time_now =
-	    dispatch_pending_node (vm, pf_timer->user_handle, cpu_time_now);
-	}
+      /*enqueue to runq*/
+      u64 max_deadline_ts = calculate_max_deadline_ts(vm, pf);
+      pf->timeout_deadline_ts = max_deadline_ts;
+      pf->is_timeout = 1;
+      *vlib_node_main_pf_runq_enqueue (nm, max_deadline_ts) = (pf - nm->pending_frames);
     }
-
-  // uword i = 0;
-  //    for (; i < _vec_len (nm->pf_runq); i++)
-  //      {
-  //  	cpu_time_now = dispatch_pending_node (vm, nm->pf_runq[i],
-  //  cpu_time_now);
-  //      }
-  //    vec_set_len(nm->pf_runq, 0);
-  while ((pf_elt = vlib_node_main_pf_runq_dequeue (nm, timestamp)) != NULL)
+ 
+  cpu_time_now = clib_cpu_time_now ();
+  while ((pf_elt = vlib_node_main_pf_runq_dequeue (nm, expire_pfs)) != NULL)
     {
-      cpu_time_now = dispatch_pending_node (vm, *pf_elt, cpu_time_now);
-      timestamp = (u64) vlib_time_now (vm);
+       if (PREDICT_TRUE(pf_elt != expire_pfs)) {
+         cpu_time_now = dispatch_pending_node (vm, *pf_elt, cpu_time_now);
+       } else {
+	 for (i = 0; i < _vec_len (expire_pfs); i++) {
+	   cpu_time_now = dispatch_pending_node (vm, expire_pfs[i], cpu_time_now);
+	 }
+	 vec_set_len(expire_pfs, 0);
+       }
     }
+  ASSERT(vlib_node_main_pf_runq_empty(nm));
+  vec_free(expire_pfs);
   vm->barrier_flush = 0;
+  vm->should_barrier_flush = 0;
 }
 
 void
 barrier_flush_pending_frames (vlib_main_t *vm)
 {
-  __barrier_flush_pending_frames (vm, 1);
+  __barrier_flush_pending_frames (vm, 0);
 }
 
-void
-barrier_flush_all_pending_frames (vlib_main_t *vm)
-{
-  __barrier_flush_pending_frames (vm, 1);
-}
+// void
+// barrier_flush_all_pending_frames (vlib_main_t *vm)
+// {
+//   __barrier_flush_pending_frames (vm, 1);
+// }
 
 always_inline uword
 vlib_process_stack_is_valid (vlib_process_t *p)
@@ -1627,11 +1645,15 @@ vlib_main_or_worker_loop (vlib_main_t *vm, int is_main)
   vlib_node_main_t *nm = &vm->node_main;
   vlib_thread_main_t *tm = vlib_get_thread_main ();
   uword i;
-  u64 cpu_time_now, timestamp;
+  u64 cpu_time_now;
   f64 now;
   vlib_frame_queue_main_t *fqm;
   u32 frame_queue_check_counter = 0;
   vm->barrier_flush = 0;
+  vm->should_barrier_flush = 0;
+  u32 *expire_pfs = NULL;
+  vec_resize (expire_pfs, 32);
+  vec_set_len (expire_pfs, 0);
   /* Initialize pending node vector. */
   if (is_main)
     {
@@ -1784,8 +1806,7 @@ vlib_main_or_worker_loop (vlib_main_t *vm, int is_main)
       /* TODO to be rewritten*/
       //       for (i = 0; i < _vec_len (nm->pending_frames); i++)
       // 	cpu_time_now = dispatch_pending_node (vm, i, cpu_time_now);
-      i = 0;
-      u32 ths = vm->timeout_ths, cnt = i;
+      //u32 ths = vm->timeout_ths, cnt = i;
       //       while (1)
       //         {
       // 	  /* dispatch node */
@@ -1806,28 +1827,34 @@ vlib_main_or_worker_loop (vlib_main_t *vm, int is_main)
       // 	  if (i == _vec_len (nm->pf_runq))
       // 	    break;
       //         }
-      while (1)
-	{
-	  /* dispatch node */
-	  u32 *pf_elt;
-	  cpu_time_now = clib_cpu_time_now ();
-	  timestamp = (u64) vlib_time_now (vm);
-	  while ((pf_elt = vlib_node_main_pf_runq_dequeue (nm, timestamp)) !=
-		 NULL)
-	    {
-	      cpu_time_now = dispatch_pending_node (vm, *pf_elt, cpu_time_now);
-	      if (cnt++ < ths)
-		break;
-	      timestamp = (u64) vlib_time_now (vm);
-	    }
-	  cnt = 0;
-	  /* check waiting queue */
-	  tw_timer_expire_timers_pf_waitq (nm->pf_waitq, vlib_time_now (vm));
+      /* dispatch node */
+      u32 *pf_elt;
+      while (1) {
+        cpu_time_now = clib_cpu_time_now ();
+        while ((pf_elt = vlib_node_main_pf_runq_dequeue (nm, expire_pfs)) != NULL)
+          {
+	      if (PREDICT_TRUE(pf_elt != expire_pfs)) {
+		cpu_time_now = dispatch_pending_node (vm, *pf_elt, cpu_time_now);
+	      } else {
+		for (i = 0; i < _vec_len (expire_pfs); i++) {
+		   cpu_time_now = dispatch_pending_node (vm, expire_pfs[i], cpu_time_now);
+		}
+		vec_set_len(expire_pfs, 0);
+	      }
+	  }
 
-	  /* check if some pending frames timeouts*/
-	  if (vlib_node_main_pf_runq_empty (nm))
-	    break;
-	}
+        /* check waiting queue */
+        tw_timer_expire_timers_pf_waitq (nm->pf_waitq, vlib_time_now (vm));
+
+        /* check if some pending frames timeouts*/
+        if (vlib_node_main_pf_runq_empty (nm))
+	  break;
+      }
+
+      if (vm->should_barrier_flush) {
+	barrier_flush_pending_frames(vm);
+      }
+
       /* Reset pending vector for next iteration. */
       // vec_set_len (nm->pending_frames, 0);
       // vec_set_len (nm->pf_runq, 0);

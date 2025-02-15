@@ -35,16 +35,15 @@ process_expired_pf_cb (u32 *expired_timer_handles)
           //clib_warning("++++++++++++vpp timeouts+++++++++++,  pf index %lu, node runtime index %lu,  time %.6f ++++++++++++++,", pfi, pf->node_runtime_index, vlib_time_now(vm));
         }
       pf->is_timeout = 1;
-
-      *vlib_node_main_pf_runq_enqueue (nm, (u64) vlib_time_now (vm),
-				       max_deadline_ts) = pfi;
-      if (PREDICT_FALSE (errno == ENOSPC))
+      
+      *vlib_node_main_pf_runq_enqueue (nm, max_deadline_ts) = pfi;
+      if (PREDICT_FALSE (vm->barrier_flush == 0 && errno == ENOSPC))
 	{
 	  if (CLIB_DEBUG > 0)
 	    clib_warning (
 	      "enqueue PF to runq failed: %d; invoking early rejection",
 	      errno);
-	  barrier_flush_all_pending_frames (vm);
+	  vm->should_barrier_flush = 1;
 	}
     }
 }
