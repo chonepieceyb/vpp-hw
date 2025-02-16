@@ -533,8 +533,6 @@ vlib_put_next_frame (vlib_main_t *vm, vlib_node_runtime_t *r, u32 next_index,
 	  p->is_timeout = 0;
 	  nf->flags |= VLIB_FRAME_PENDING;
 	  f->frame_flags |= VLIB_FRAME_PENDING;
-	  u64 max_deadline_ts = calculate_max_deadline_ts (vm, p);
-	  p->timeout_deadline_ts = max_deadline_ts;
 	  // add p to wait queue or run queue
 	  if (f->n_vectors >= rt->batch_size || rt->timeout_interval == 0 ||
 	      vm->barrier_flush)
@@ -543,8 +541,11 @@ vlib_put_next_frame (vlib_main_t *vm, vlib_node_runtime_t *r, u32 next_index,
 	      // index %lu, nf index %lu", p - nm->pending_frames,
 	      // p->next_frame_index ); vec_add1(nm->pf_runq, p -
 	      // nm->pending_frames);
+	      u64 max_deadline_ts = calculate_max_deadline_ts (vm, p);
+	      p->timeout_deadline_ts = max_deadline_ts;
 	      *vlib_node_main_pf_runq_enqueue (nm, p->timeout_deadline_ts) =
 		p - nm->pending_frames;
+	      nf->stop_timer_handler = ~0;
 	      if (PREDICT_FALSE (vm->barrier_flush == 0 && errno == ENOSPC))
 		{
 		  if (CLIB_DEBUG > 0)
@@ -554,7 +555,6 @@ vlib_put_next_frame (vlib_main_t *vm, vlib_node_runtime_t *r, u32 next_index,
 		  //barrier_flush_all_pending_frames (vm);
 		  vm->should_barrier_flush = 1;
 		}
-	      nf->stop_timer_handler = ~0;
 	    }
 	  else
 	    {
@@ -1352,7 +1352,7 @@ __barrier_flush_pending_frames (vlib_main_t *vm, int flush_runq)
       pf->is_timeout = 1;
       *vlib_node_main_pf_runq_enqueue (nm, max_deadline_ts) = (pf - nm->pending_frames);
     }
- 
+  vec_set_len(expire_pfs, 0);
   cpu_time_now = clib_cpu_time_now ();
   while ((pf_elt = vlib_node_main_pf_runq_dequeue (nm, expire_pfs)) != NULL)
     {
@@ -1374,7 +1374,7 @@ __barrier_flush_pending_frames (vlib_main_t *vm, int flush_runq)
 void
 barrier_flush_pending_frames (vlib_main_t *vm)
 {
-  __barrier_flush_pending_frames (vm, 0);
+  __barrier_flush_pending_frames (vm, 1);
 }
 
 // void
@@ -1853,6 +1853,7 @@ vlib_main_or_worker_loop (vlib_main_t *vm, int is_main)
 
       if (vm->should_barrier_flush) {
 	barrier_flush_pending_frames(vm);
+	//vm->should_barrier_flush = 0;
       }
 
       /* Reset pending vector for next iteration. */

@@ -341,7 +341,9 @@ always_inline void __pf_runq_cq_new_inline(void **p, u32 elt_bytes,
 
   vec = _vec_alloc_internal(bucket_count, &va);
   header = pf_runq_header(vec, cq);
-  bucket_size = bucket_budget; /* each element consumes 1 for now */
+  // bucket_size = bucket_budget; /* each element consumes 1 for now */
+  bucket_size = 16;
+  bucket_budget = 8;
 
   clib_memset(header, 0, sizeof(*header));
   header->count = bucket_count;
@@ -388,7 +390,8 @@ __handle_expire_buckets(vlib_pf_runq_cq_header_t *header,
   u64 i, last_tick = header->last_tick,
          *bitmap = header->bitmap;
   vlib_pf_runq_cq_bucket_t *bucket;
-
+ 
+  ASSERT(last_tick <= curr_tick);
   vec_set_len(vec_bck, 0);
   if (PREDICT_TRUE(last_tick == curr_tick)) {
     /* Nothing to do */
@@ -458,6 +461,8 @@ always_inline void *pf_runq_cq_cons(void *vec, u64 curr_tick, u32 *vec_bck) {
   current_bucket = vec_elt_at_index(buckets, curr_idx);
   ring = bucket->ring;
   elt = __vlib_pf_runq_ring_cons(ring);
+  if (pf_runq_len(ring) == 0)
+	clib_bitmap_set(header->bitmap, bucket_idx, 0);
 
   ASSERT(elt != NULL && "ring is empty while bit in bitmap is set");
 
@@ -483,12 +488,16 @@ always_inline void *__pf_runq_cq_prod(void *vec, u64 deadline, u32 expense) {
   
   if (deadline < header->last_tick) {
 	/*deadline is too old, in this case we trigger flushing*/
-	errno = ENOSPC;   
+	//errno = ENOSPC;   
 	// clib_warning("deadline is too old: deadline = %llu, "
         //          "last_tick = %llu",
         //          deadline, header->last_tick);
-	deadline = header->last_tick;
-  } else if (deadline - header->last_tick >= header->count) {
+	deadline = get_tick((u64) (vlib_time_now(vlib_get_main()) * 1e9));
+  
+	//deadline = header->last_tick;
+  } 
+  
+  if (deadline - header->last_tick >= header->count) {
         // clib_warning("deadline out of range: deadline = %llu, "
         //          "last_tick = %llu, count = %llu",
         //          deadline, header->last_tick, header->count);
