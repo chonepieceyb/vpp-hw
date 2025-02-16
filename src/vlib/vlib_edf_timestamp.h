@@ -92,7 +92,11 @@ u64 calculate_min_deadline_ts(vlib_main_t *vm, vlib_pending_frame_t *pf)
       min_deadline_ts = time_stamp < min_deadline_ts ? time_stamp : min_deadline_ts;
     }
   }
-  return min_deadline_ts + TIME_OUT_THRESHOLDER_NS;
+  if (min_deadline_ts != ~0)
+    return min_deadline_ts + TIME_OUT_THRESHOLDER_NS;
+  else 
+    return ~0;
 }
+
 
 #endif /* included_vlib_edf_timestamp_h */

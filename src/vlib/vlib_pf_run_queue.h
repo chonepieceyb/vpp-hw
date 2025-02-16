@@ -491,7 +491,7 @@ always_inline void *__pf_runq_cq_prod(void *vec, u64 deadline, u32 expense) {
   
   if (deadline < header->last_tick) {
 	/*deadline is too old, in this case we trigger flushing*/
-	//errno = ENOSPC;   
+	errno = ENOSPC;   
 	// clib_warning("deadline is too old: deadline = %llu, "
         //          "last_tick = %llu",
         //          deadline, header->last_tick);
