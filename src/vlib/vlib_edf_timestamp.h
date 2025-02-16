@@ -62,9 +62,9 @@ typedef struct
 
 // 计算并返回当前pending_frame中最大的timestamp，其加上
 static_always_inline
-u64 calculate_max_deadline_ts(vlib_main_t *vm, vlib_pending_frame_t *pf)
+u64 calculate_min_deadline_ts(vlib_main_t *vm, vlib_pending_frame_t *pf)
 {
-  u64 max_deadline_ts = 0, time_stamp = 0;
+  u64 min_deadline_ts = ~0, time_stamp = 0;
   vlib_frame_t *f = vlib_get_frame(vm, pf->frame);
   u32 *buffer_index_arr = (u32 *) vlib_frame_vector_args (f);
   // clib_warning("[begin] f->n_vectors:%d", f->n_vectors);
@@ -89,16 +89,10 @@ u64 calculate_max_deadline_ts(vlib_main_t *vm, vlib_pending_frame_t *pf)
       }
       time_stamp = ((vnet_buffer_opaque2_copy_t *) b->opaque2)->timestamp;
       // clib_warning("buffer_index_arr[%d]:%d, protocol_identifier:%d, time_stamp:%lu", i, buffer_index_arr[i], protocol_identifier, time_stamp);
-      max_deadline_ts = time_stamp > max_deadline_ts ? time_stamp : max_deadline_ts;
+      min_deadline_ts = time_stamp < min_deadline_ts ? time_stamp : min_deadline_ts;
     }
   }
-  if (max_deadline_ts == 0) {
-    pf->timeout_deadline_ts = 0;
-  } else {
-    pf->timeout_deadline_ts = max_deadline_ts + TIME_OUT_THRESHOLDER_NS;
-  }
-  // clib_warning("[end], pf->timeout_deadline_ts %lu", pf->timeout_deadline_ts);
-  return max_deadline_ts;
+  return min_deadline_ts + TIME_OUT_THRESHOLDER_NS;
 }
 
 #endif /* included_vlib_edf_timestamp_h */

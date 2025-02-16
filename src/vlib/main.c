@@ -380,7 +380,8 @@ vlib_get_next_frame_internal (vlib_main_t *vm, vlib_node_runtime_t *node,
     }
 
   /* Allocate new frame if current one is marked as no-append or
-     it is already full. */
+     it is already full*/
+  /*FIXME: fi the frame is in runq (stop_timer_handler == ~0), we force create a new frame*/
   n_used = f->n_vectors;
   if (n_used >= rt->batch_size || (allocate_new_next_frame && n_used > 0) ||
       (f->frame_flags & VLIB_FRAME_NO_APPEND))
@@ -392,25 +393,23 @@ vlib_get_next_frame_internal (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  vlib_frame_t *f_old = vlib_get_frame (vm, nf->frame);
 	  f_old->frame_flags |= VLIB_FRAME_FREE_AFTER_DISPATCH;
 	}
-
-      /* Allocate new frame to replace full one. */
-      f = nf->frame = vlib_frame_alloc (vm, node, next_index);
-      n_used = f->n_vectors;
-
-      /* move full frame from wait queue to runq*/
-      if (PREDICT_TRUE (nf->stop_timer_handler != ~0))
+      if (nf->stop_timer_handler != ~0)
 	{
 	  vlib_node_main_t *nm = &vm->node_main;
 	  tw_timer_pf_waitq_t *pf_timer = pool_elt_at_index (
 	    ((tw_timer_wheel_pf_waitq_t *) nm->pf_waitq)->timers,
 	    nf->stop_timer_handler);
-
+	  vlib_pending_frame_t *pf = pool_elt_at_index(nm->pending_frames, pf_timer->user_handle);
+          u64 min_deadline_ts = calculate_min_deadline_ts (vm, pf);
+	  pf->timeout_deadline_ts = min_deadline_ts;
 	  *vlib_node_main_pf_runq_enqueue (
-	    nm, vec_elt (nm->pending_frames, pf_timer->user_handle).timeout_deadline_ts) 
+	    nm, min_deadline_ts) 
 	      = pf_timer->user_handle;
 	  int __errno = errno;
+	  ASSERT(nf->stop_timer_handler == pf->stop_timer_handler && "should be the same handler");
           tw_timer_stop_pf_waitq (nm->pf_waitq, nf->stop_timer_handler);
 	  nf->stop_timer_handler = ~0;
+	  pf->stop_timer_handler = ~0;
 	  if (PREDICT_FALSE (vm->barrier_flush == 0 && __errno == ENOSPC))
 		{
 			if (CLIB_DEBUG > 0)
@@ -422,8 +421,16 @@ vlib_get_next_frame_internal (vlib_main_t *vm, vlib_node_runtime_t *node,
 	  // clib_warning("++++++++++++ vpp move full frame from wait queue to
 	  // runq, stop_timer_handler %u, user handler %u",
 	  // nf->stop_timer_handler, pf_timer->user_handle);
+      }
+      /* Allocate new frame to replace full one. */
+      f = nf->frame = vlib_frame_alloc (vm, node, next_index);
+      /*we alloc new frame reset stop timer handler*/
+      nf->stop_timer_handler = ~0;
+      n_used = f->n_vectors;
 
-	}
+      /* move full frame from wait queue to runq*/
+ //     ASSERT(nf->stop_timer_handler != ~0);
+ //     if (PREDICT_TRUE (nf->stop_timer_handler != ~0))
     }
 
   /* Should have free vectors in frame now. */
@@ -533,6 +540,7 @@ vlib_put_next_frame (vlib_main_t *vm, vlib_node_runtime_t *r, u32 next_index,
 	  p->is_timeout = 0;
 	  nf->flags |= VLIB_FRAME_PENDING;
 	  f->frame_flags |= VLIB_FRAME_PENDING;
+	  ASSERT(nf->stop_timer_handler == ~0);
 	  // add p to wait queue or run queue
 	  if (f->n_vectors >= rt->batch_size || rt->timeout_interval == 0 ||
 	      vm->barrier_flush)
@@ -541,18 +549,18 @@ vlib_put_next_frame (vlib_main_t *vm, vlib_node_runtime_t *r, u32 next_index,
 	      // index %lu, nf index %lu", p - nm->pending_frames,
 	      // p->next_frame_index ); vec_add1(nm->pf_runq, p -
 	      // nm->pending_frames);
-	      u64 max_deadline_ts = calculate_max_deadline_ts (vm, p);
-	      p->timeout_deadline_ts = max_deadline_ts;
-	      *vlib_node_main_pf_runq_enqueue (nm, p->timeout_deadline_ts) =
+	      u64 min_deadline_ts = calculate_min_deadline_ts (vm, p);
+	      p->timeout_deadline_ts = min_deadline_ts;
+	      *vlib_node_main_pf_runq_enqueue (nm, min_deadline_ts) =
 		p - nm->pending_frames;
 	      nf->stop_timer_handler = ~0;
+	      p->stop_timer_handler = ~0;
 	      if (PREDICT_FALSE (vm->barrier_flush == 0 && errno == ENOSPC))
 		{
 		  if (CLIB_DEBUG > 0)
 		    clib_warning ("enqueue PF to runq failed: %d; invoking "
 				  "early rejection",
 				  errno);
-		  //barrier_flush_all_pending_frames (vm);
 		  vm->should_barrier_flush = 1;
 		}
 	    }
@@ -566,6 +574,7 @@ vlib_put_next_frame (vlib_main_t *vm, vlib_node_runtime_t *r, u32 next_index,
 	      // nm->pending_frames,  p->next_frame_index, now);
 	      nf->stop_timer_handler = tw_timer_start_pf_waitq (
 		nm->pf_waitq, p - nm->pending_frames, 0, rt->timeout_interval);
+	      p->stop_timer_handler = nf->stop_timer_handler;
 	    }
 	}
 
@@ -1338,19 +1347,30 @@ __barrier_flush_pending_frames (vlib_main_t *vm, int flush_runq)
   pool_foreach (pf, nm->pending_frames)
     {
       /*stop timer first*/
-      if (pf->next_frame_index != VLIB_PENDING_FRAME_NO_NEXT_FRAME) {
-	vlib_next_frame_t *nf = vec_elt_at_index (nm->next_frames, pf->next_frame_index);
-	// ASSERT(nf->stop_timer_handler != ~0 && "barrier flushing, pending_frames stop_timer_handler is ~0");
-	if (PREDICT_TRUE(nf->stop_timer_handler != ~0)) {
-	  tw_timer_stop_pf_waitq (nm->pf_waitq, nf->stop_timer_handler);
-          nf->stop_timer_handler = ~0;
-	}	
+//       if (pf->next_frame_index != VLIB_PENDING_FRAME_NO_NEXT_FRAME) {
+// 	vlib_next_frame_t *nf = vec_elt_at_index (nm->next_frames, pf->next_frame_index);
+// 	// ASSERT(nf->stop_timer_handler != ~0 && "barrier flushing, pending_frames stop_timer_handler is ~0");
+// 	if (PREDICT_TRUE(nf->stop_timer_handler != ~0)) {
+// 	  tw_timer_stop_pf_waitq (nm->pf_waitq, nf->stop_timer_handler);
+//           nf->stop_timer_handler = ~0;
+// 	}	
+//       }
+      ASSERT(pf->next_frame_index != VLIB_PENDING_FRAME_NO_NEXT_FRAME);
+      vlib_next_frame_t *nf = vec_elt_at_index (nm->next_frames, pf->next_frame_index);
+      ASSERT(nf->flags & VLIB_FRAME_PENDING);
+      ASSERT(pf->stop_timer_handler != ~0 && "barrier flushing, pending_frames stop_timer_handler is ~0");
+      tw_timer_stop_pf_waitq (nm->pf_waitq, pf->stop_timer_handler);
+      if (pf->frame == nf->frame) {
+	ASSERT(nf->stop_timer_handler == pf->stop_timer_handler);
+	nf->stop_timer_handler = ~0;
       }
+      pf->stop_timer_handler = ~0;
+
       /*enqueue to runq*/
-      u64 max_deadline_ts = calculate_max_deadline_ts(vm, pf);
-      pf->timeout_deadline_ts = max_deadline_ts;
+      u64 min_deadline_ts = calculate_min_deadline_ts(vm, pf);
+      pf->timeout_deadline_ts = min_deadline_ts;
       pf->is_timeout = 1;
-      *vlib_node_main_pf_runq_enqueue (nm, max_deadline_ts) = (pf - nm->pending_frames);
+      *vlib_node_main_pf_runq_enqueue (nm, min_deadline_ts) = (pf - nm->pending_frames);
     }
   vec_set_len(expire_pfs, 0);
   cpu_time_now = clib_cpu_time_now ();
@@ -1367,8 +1387,25 @@ __barrier_flush_pending_frames (vlib_main_t *vm, int flush_runq)
     }
   ASSERT(vlib_node_main_pf_runq_empty(nm));
   vec_free(expire_pfs);
+  
+  /* reset batch size*/
+  if (vm->should_barrier_flush) {
+	vlib_node_runtime_t *rt;
+	vec_foreach (rt, vm->node_main.nodes_by_type[VLIB_NODE_TYPE_INTERNAL])
+	  {
+	     if (rt->timeout_interval > 0) {
+		if (rt->batch_size > 16)
+		  rt->batch_size = rt->batch_size / 2;
+		else {
+		  rt->batch_size = 16;
+		}
+	     }
+	  }
+  }
+
   vm->barrier_flush = 0;
   vm->should_barrier_flush = 0;
+  errno = 0;
 }
 
 void

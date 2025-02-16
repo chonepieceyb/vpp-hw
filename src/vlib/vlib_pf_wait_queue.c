@@ -25,18 +25,24 @@ process_expired_pf_cb (u32 *expired_timer_handles)
     {
       u32 pfi = *handle; 
       vlib_pending_frame_t *pf = pool_elt_at_index(nm->pending_frames, pfi);
-      u64 max_deadline_ts = calculate_max_deadline_ts(vm, pf);
-      pf->timeout_deadline_ts = max_deadline_ts;
-
-      if (pf->next_frame_index != VLIB_PENDING_FRAME_NO_NEXT_FRAME)
-        {
-          vlib_next_frame_t *nf = vec_elt_at_index (nm->next_frames, pf->next_frame_index);
-          nf->stop_timer_handler = ~0;
-          //clib_warning("++++++++++++vpp timeouts+++++++++++,  pf index %lu, node runtime index %lu,  time %.6f ++++++++++++++,", pfi, pf->node_runtime_index, vlib_time_now(vm));
-        }
-      pf->is_timeout = 1;
+      u64 min_deadline_ts = calculate_min_deadline_ts(vm, pf);
+      pf->timeout_deadline_ts = min_deadline_ts;
       
-      *vlib_node_main_pf_runq_enqueue (nm, max_deadline_ts) = pfi;
+      // if (pf->next_frame_index != VLIB_PENDING_FRAME_NO_NEXT_FRAME)
+      //   {
+      //     vlib_next_frame_t *nf = vec_elt_at_index (nm->next_frames, pf->next_frame_index);
+      //     nf->stop_timer_handler = ~0;
+      //     //clib_warning("++++++++++++vpp timeouts+++++++++++,  pf index %lu, node runtime index %lu,  time %.6f ++++++++++++++,", pfi, pf->node_runtime_index, vlib_time_now(vm));
+      //   }
+      ASSERT(pf->next_frame_index != VLIB_PENDING_FRAME_NO_NEXT_FRAME);
+      vlib_next_frame_t *nf = vec_elt_at_index (nm->next_frames, pf->next_frame_index);
+      if (pf->frame == nf->frame) {
+	ASSERT(pf->stop_timer_handler == nf->stop_timer_handler);
+	nf->stop_timer_handler = ~0;
+      }
+      pf->stop_timer_handler = ~0;
+      pf->is_timeout = 1;
+      *vlib_node_main_pf_runq_enqueue (nm, min_deadline_ts) = pfi;
       if (PREDICT_FALSE (vm->barrier_flush == 0 && errno == ENOSPC))
 	{
 	  if (CLIB_DEBUG > 0)

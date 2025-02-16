@@ -401,7 +401,10 @@ __handle_expire_buckets(vlib_pf_runq_cq_header_t *header,
   /* handle expires buckets*/
   u32 last_idx = last_tick & (header->count - 1);
   u32 curr_idx = curr_tick & (header->count - 1);
-
+  
+  /* reset last index's budget*/
+  bucket = vec_elt_at_index(buckets, last_idx);
+  bucket->remaining_budget = header->budget;
   if (last_idx < curr_idx) {
   	i = clib_bitmap_next_set(bitmap, last_idx);  /*last idx may still have expire pfs*/
 	while (i != ~0 && i < curr_idx) {
@@ -492,8 +495,8 @@ always_inline void *__pf_runq_cq_prod(void *vec, u64 deadline, u32 expense) {
 	// clib_warning("deadline is too old: deadline = %llu, "
         //          "last_tick = %llu",
         //          deadline, header->last_tick);
-	deadline = get_tick((u64) (vlib_time_now(vlib_get_main()) * 1e9));
-  
+	//deadline = get_tick((u64) (vlib_time_now(vlib_get_main()) * 1e9));
+        deadline = header->last_tick;
 	//deadline = header->last_tick;
   } 
   
@@ -507,10 +510,8 @@ always_inline void *__pf_runq_cq_prod(void *vec, u64 deadline, u32 expense) {
   /* Passing timestamp directly also works */
   u32 bucket_index = deadline & (header->count - 1);
   bucket = vec_elt_at_index(buckets, bucket_index);
-  if (PREDICT_FALSE(bucket->remaining_budget == header->budget)) {
-	/* this bucket is first set*/
+
 	clib_bitmap_set(header->bitmap, bucket_index, 1);
-  }
 
   bucket->remaining_budget -= expense;
   if (PREDICT_FALSE(bucket->remaining_budget <= 0))
@@ -574,7 +575,7 @@ static_always_inline void vlib_node_main_pf_runq_destroy(vlib_node_main_t *nm) {
 static_always_inline u32 *vlib_node_main_pf_runq_enqueue(vlib_node_main_t *nm, u64 deadline_ns) {
   u32 expense, *elt;
 
-  if (deadline_ns == 0)
+  if (deadline_ns == ~0)
     return pf_runq_enq(nm->pf_runq);
 
   expense = 1; /* each PF consumes 1 for now */

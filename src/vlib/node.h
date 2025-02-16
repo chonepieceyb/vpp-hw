@@ -474,6 +474,8 @@ typedef struct
   u32 next_frame_index;
 
   int is_timeout;
+
+  u32 stop_timer_handler;
   
   /* start time create this pending frame */
   u64 dispatch_start_clock;
