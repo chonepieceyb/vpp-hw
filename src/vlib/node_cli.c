@@ -1055,6 +1055,157 @@ VLIB_CLI_COMMAND (set_node_batch_command, static) = {
   .function = set_node_batch,
 };
 
+static clib_error_t *
+set_node_testinput_fn (vlib_main_t *vm, unformat_input_t *input,
+		vlib_cli_command_t *cmd)
+{
+  unformat_input_t _line_input, *line_input = &_line_input;
+  clib_error_t *error = 0;
+  int test_input_us = -1;
+  u64 __test_input_us = ~0;
+  vlib_main_t *stat_vm;
+  uword i;
+  if (!unformat_user (input, unformat_line_input, line_input))
+    goto out;
+
+  while (unformat_check_input (line_input) != UNFORMAT_END_OF_INPUT)
+    {
+      if (!unformat (line_input, "%d", &test_input_us))
+	{
+	  error = clib_error_return (
+	    0, "expected valid test_input_us, got '%U'",
+	    format_unformat_error, line_input);
+	  goto out_free_line_input;
+	}
+    }
+
+  if (test_input_us >= 0)
+    __test_input_us = test_input_us;
+
+  vlib_worker_thread_barrier_sync (vm);
+
+  for (i = 0; i < vlib_get_n_threads (); i++)
+  {
+    stat_vm = vlib_get_main_by_index (i);
+    if (stat_vm)
+      stat_vm->testing_input_rate_us = __test_input_us;
+  }
+  
+  vlib_worker_thread_barrier_release (vm);
+
+out_free_line_input:
+  unformat_free (line_input);
+out:
+  return error;
+}
+
+VLIB_CLI_COMMAND (set_node_testinput_command, static) = {
+  .path = "set node testinput",
+  .short_help = "set node testinput <test_input_us>",
+  .function = set_node_testinput_fn,
+};
+
+static clib_error_t *
+node_testinput_reset_fn (vlib_main_t * vm,
+			      unformat_input_t * input,
+			      vlib_cli_command_t * cmd)
+{
+  vlib_thread_main_t *tm = vlib_get_thread_main();
+
+  // set timestamp for duration counting
+  u32 i;
+  vlib_worker_thread_barrier_sync (vm);
+  for (i = 0; i < tm->n_vlib_mains; i++) {
+    vlib_main_t *curr_vm = vlib_get_main_by_index(i);
+    // get latency statistics counter
+    testinput_stats_t *input_stats_ptr = &(curr_vm->test_input_stats);
+    latency_counter_t *lat_stats_ptr = &(curr_vm->total_lat_stats);
+    input_stats_ptr->input_time_ns = 0;
+    input_stats_ptr->repeat_count = 0;
+    lat_stats_ptr->total_pkts = 0;
+  }
+  vlib_worker_thread_barrier_release(vm);
+  return 0;
+}
+
+/*?
+ * This command is used to reset packets average latency measure record.
+ *
+ * @cliexpar
+ * Example of how to display how many DPDK buffer test command has allocated:
+ * @cliexstart{show dpdk latency}
+ * DPDK Version:        DPDK 16.11.0
+ * @cliexend
+?*/
+/* *INDENT-OFF* */
+VLIB_CLI_COMMAND (reset_packets_latency, static) = {
+  .path = "node testinput reset",
+  .short_help = "node testinput reset",
+  .function = node_testinput_reset_fn,
+};
+/* *INDENT-ON* */
+
+
+// print human friendly format
+static clib_error_t *
+node_testinput_show_fn (vlib_main_t * vm,
+			      unformat_input_t * input,
+			      vlib_cli_command_t * cmd)
+{
+  vlib_thread_main_t *tm = vlib_get_thread_main();
+
+  // set timestamp for duration counting
+  u32 i;
+  // aggregation
+  testinput_stats_t total_input_stats = {0};
+  latency_counter_t total_lat_stats = {0};
+
+  vlib_worker_thread_barrier_sync (vm);
+  for (i = 0; i < tm->n_vlib_mains; i++) {
+    vlib_main_t *curr_vm = vlib_get_main_by_index(i);
+    // get latency statistics counter
+    testinput_stats_t *input_stats_ptr = &(curr_vm->test_input_stats);
+    latency_counter_t *lat_stats_ptr = &(curr_vm->total_lat_stats);
+    total_lat_stats.total_pkts += lat_stats_ptr->total_pkts;
+    total_input_stats.repeat_count += input_stats_ptr->repeat_count;
+    total_input_stats.input_time_ns += input_stats_ptr->input_time_ns;
+  }
+  vlib_worker_thread_barrier_release(vm);
+
+  f64 avg_input_time_ns, avg_input_pkts, agv_input_rate;
+  // print total latency
+  if (total_input_stats.repeat_count == 0) {
+    avg_input_time_ns = 0;
+    avg_input_pkts = 0;
+    agv_input_rate = 0;
+  } else {
+    avg_input_time_ns = (f64) (total_input_stats.input_time_ns) / total_input_stats.repeat_count;
+    avg_input_pkts = (f64)total_lat_stats.total_pkts / total_input_stats.repeat_count;
+    agv_input_rate = avg_input_pkts / avg_input_time_ns * 1e9;
+  }
+
+  vlib_cli_output (vm, "avg_input_time_ns:%f,avg_input_pkts:%f,avg_input_rate:%f", avg_input_time_ns, avg_input_pkts, agv_input_rate);
+  return 0;
+}
+
+/*?
+ * This command is used to display the current packets average latency.
+ *
+ * @cliexpar
+ * Example of how to display how many DPDK buffer test command has allocated:
+ * @cliexstart{show dpdk latency}
+ * Ethernet0 [latency] total_lat(ns): 0, pkts: 0, avg_lat(ns): 0
+ * Ethernet1 [latency] total_lat(ns): 237, pkts: 1, avg_lat(ns): 237
+ * @cliexend
+?*/
+/* *INDENT-OFF* */
+VLIB_CLI_COMMAND (show_packets_latency, static) = {
+  .path = "node testinput show",
+  .short_help = "node testinput show",
+  .function = node_testinput_show_fn,
+};
+
+
 /* Dummy function to get us linked in. */
 void
 vlib_node_cli_reference (void)

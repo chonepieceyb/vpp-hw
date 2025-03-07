@@ -1,0 +1,327 @@
+{
+    "workloads": {
+        "ip6": 0.4545,
+        "ip4-nat": 0.2273,
+        "ip4-wo-nat": 0.2273,
+        "igmp": 0.0227,
+        "arp": 0.0227,
+        "tap":0.0227,
+        "icmp": 0.0227
+    },
+    "nodes": [
+        {
+            "name": "ethernet-input",
+            "workloads": [
+                "ip6",
+                "ip4-nat",
+                "ip4-wo-nat", 
+                "igmp",
+                "arp",
+                "tap",
+                "icmp"
+            ],
+            "next_nodes": [
+                "ip4-input-no-checksum",
+                "arp-input",
+                "ip6-input"
+            ],   
+            "batch_size":32         
+        },
+        {
+            "name": "ip4-input-no-checksum",
+            "workloads": [
+                "ip4-nat",
+                "ip4-wo-nat", 
+                "igmp",
+                "tap",
+                "icmp"
+            ],
+            "next_nodes": [
+                "ip4-mfib-forward-lookup",
+                "ip4-sv-reassembly-feature"
+            ],   
+            "batch_size":32         
+        },
+        {
+            "name": "ip4-mfib-forward-lookup",
+            "workloads": [
+                "igmp"
+            ],
+            "next_nodes": [
+                "ip4-mfib-forward-rpf"
+            ],   
+            "batch_size":32         
+        },
+        {
+            "name": "ip4-mfib-forward-rpf",
+            "workloads": [
+                "igmp"
+            ],
+            "next_nodes": [
+                "ip4-drop"
+            ],   
+            "batch_size":32         
+        },
+        {
+            "name": "ip4-drop",
+            "workloads": [
+                "igmp"
+            ],
+            "next_nodes": [
+                "error-drop"
+            ],   
+            "batch_size":32         
+        },
+        {
+            "name": "error-drop",
+            "workloads": [
+                "igmp",
+                "arp"
+            ],
+            "next_nodes": [
+            ],   
+            "batch_size":32         
+        },
+        {
+            "name": "ip4-sv-reassembly-feature",
+            "workloads": [
+                "ip4-nat",
+                "ip4-wo-nat", 
+                "tap",
+                "icmp"
+            ],
+            "next_nodes": [
+                "nat-pre-in2out"
+            ],   
+            "batch_size":32         
+        },
+        {
+            "name": "nat-pre-in2out",
+            "workloads": [
+                "ip4-nat",
+                "ip4-wo-nat", 
+                "tap",
+                "icmp"
+            ],
+            "next_nodes": [
+                "nat44-ed-in2out"
+            ],   
+            "batch_size":32         
+        },
+        {
+            "name": "nat44-ed-in2out",
+            "workloads": [
+                "ip4-nat",
+                "ip4-wo-nat", 
+                "tap",
+                "icmp"
+            ],
+            "next_nodes": [
+                "ip4-inacl",
+                "nat44-ed-in2out-slowpath"
+            ],   
+            "batch_size":32         
+        },
+        {
+            "name": "ip4-inacl",
+            "workloads": [
+                "ip4-nat",
+                "ip4-wo-nat", 
+                "tap",
+                "icmp"
+            ],
+            "next_nodes": [
+                "ip4-lookup"
+            ],   
+            "batch_size":32         
+        },
+        {
+            "name": "nat44-ed-in2out-slowpath",
+            "workloads": [
+                "ip4-wo-nat", 
+                "tap",
+                "icmp"
+            ],
+            "next_nodes": [
+                "ip4-inacl"
+            ],   
+            "batch_size":32         
+        },
+        {
+            "name": "arp-input",
+            "workloads": [
+                "arp"
+            ],
+            "next_nodes": [
+                "arp-reply"
+            ],
+            "batch_size":32  
+        },
+        {
+            "name": "arp-reply",
+            "workloads": [
+                "arp"
+            ],
+            "next_nodes": [
+                "error-drop"
+            ],
+            "batch_size":32  
+        },
+        {
+            "name": "ip6-input",
+            "workloads": [
+                "ip6"
+            ],
+            "next_nodes": [
+                "ip6-lookup"
+            ],
+            "batch_size":32  
+        },
+        {
+            "name": "ip6-lookup",
+            "workloads": [
+                "ip6"
+            ],
+            "next_nodes": [
+                "ip6-rewrite"
+            ],
+            "batch_size":32  
+        },
+        {
+            "name": "ip6-rewrite",
+            "workloads": [
+                "ip6"
+            ],
+            "next_nodes": [
+                "Ethernet1-output"
+            ],
+            "batch_size":32  
+        },       
+        {
+            "name": "ip4-lookup",
+            "workloads": [
+                "ip4-nat",
+                "ip4-wo-nat", 
+                "tap",
+                "icmp"
+            ],
+            "next_nodes": [
+                "ip4-receive",
+                "ip4-rewrite"
+            ],   
+            "batch_size":32
+        },
+        {
+            "name": "ip4-receive",
+            "workloads": [
+                "icmp"
+            ],
+            "next_nodes": [
+                "ip4-icmp-input"
+            ],
+            "batch_size":32
+        },
+        {
+            "name": "ip4-icmp-input",
+            "workloads": [
+                "icmp"
+            ],
+            "next_nodes": [
+                "ip4-icmp-echo-request"
+            ],
+            "batch_size":32
+        },
+        {
+            "name": "ip4-icmp-echo-request",
+            "workloads": [
+                "icmp"
+            ],
+            "next_nodes": [
+                "ip4-load-balance"
+            ],
+            "batch_size":32
+        },
+        {
+            "name": "ip4-load-balance",
+            "workloads": [
+                "icmp"
+            ],
+            "next_nodes": [
+                "ip4-rewrite"
+            ],
+            "batch_size":32
+        },
+        {
+            "name": "ip4-rewrite",
+            "workloads": [
+                "ip4-nat",
+                "ip4-wo-nat", 
+                "tap",
+                "icmp"
+            ],
+            "next_nodes": [
+                "loop0-output",
+                "Ethernet1-output"
+            ],
+            "batch_size":32
+        },
+        {
+            "name": "loop0-output",
+            "workloads": [
+                "tap"
+            ],
+            "next_nodes": [
+            ],
+            "batch_size":32
+        },
+        {
+            "name": "l2-input",
+            "workloads": [
+                "tap"
+            ],
+            "next_nodes": [
+                "l2-fwd"
+            ],
+            "batch_size":32
+        },
+        {
+            "name": "l2-fwd",
+            "workloads": [
+                "tap"
+            ],
+            "next_nodes": [
+                "l2-output"
+            ],
+            "batch_size":32
+        },
+        {
+            "name": "l2-output",
+            "workloads": [
+                "tap"
+            ],
+            "next_nodes": [
+                "tap0-output"
+            ],
+            "batch_size":32
+        },
+        {
+            "name": "tap0-output",
+            "workloads": [
+                "tap"
+            ],
+            "next_nodes": [],
+            "batch_size":32
+        },
+        {
+            "name": "Ethernet1-output",
+            "workloads": [
+                "ip6",
+                "ip4-nat",
+                "ip4-wo-nat", 
+                "icmp"
+            ],
+            "next_nodes": [],
+            "batch_size":32
+        }
+    ]
+}

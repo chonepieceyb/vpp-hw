@@ -358,7 +358,7 @@ dpdk_device_input (vlib_main_t * vm, dpdk_main_t * dm, dpdk_device_t * xd,
   u32 or_flags;
   u32 n;
   u32 batch_size;
-  f64 timeouts, start;
+  f64 timeouts, start, end;
   int single_next = 0;
 
   dpdk_per_thread_data_t *ptd = vec_elt_at_index (dm->per_thread_data,
@@ -400,6 +400,23 @@ dpdk_device_input (vlib_main_t * vm, dpdk_main_t * dm, dpdk_device_t * xd,
     }
   if (n_rx_packets == 0)
     return 0;
+  end = clib_time_now (&vm->clib_time);
+
+  if (vm->testing_input_rate_us != ~0) {
+    //simulated we process packet with testing_input_rate_us and directly drop them 
+    u64 now_us = (u64) (vlib_time_now(vm) * 1e6);
+    while(true) {
+	if ((u64) (vlib_time_now(vm) * 1e6) - now_us >= vm->testing_input_rate_us) {
+		break;
+	}
+    }
+    vm->total_lat_stats.total_pkts += n_rx_packets;
+    vm->test_input_stats.repeat_count += 1;
+    vm->test_input_stats.input_time_ns += (u64)((end - start) * 1e9);
+    /*free packets*/
+    rte_pktmbuf_free_bulk(ptd->mbufs, n_rx_packets);
+    return 0;
+  }
 
   // -- calc_latency START --
   // get nano second now timestamp

@@ -112,6 +112,11 @@ typedef struct {
   u64 total_bytes; /* Total throughput in bytes */
 } latency_counter_t;
 
+typedef struct {
+  u32 repeat_count; 
+  u64 input_time_ns;
+} testinput_stats_t;
+
 typedef struct vlib_main_t
 {
   CLIB_CACHE_LINE_ALIGN_MARK (cacheline0);
@@ -282,6 +287,11 @@ typedef struct vlib_main_t
   // latency calculation used temp store 
   latency_counter_t total_lat_stats;
   latency_counter_t lat_stats[MAX_LATENCY_TRACE_COUNT];
+
+  // should testing input rate, reuse total_lat_stats
+  u64 testing_input_rate_us; 
+  testinput_stats_t test_input_stats;
+
   // last time reset latency statistics
   f64 last_timestamp;
 } vlib_main_t;

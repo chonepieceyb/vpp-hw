@@ -2021,6 +2021,7 @@ vlib_main (vlib_main_t * volatile vm, unformat_input_t * input)
   vlib_node_main_t *nm = &vm->node_main;
 
   vm->queue_signal_callback = placeholder_queue_signal_callback;
+  vm->testing_input_rate_us = ~0;
 
   /* Reconfigure event log which is enabled very early */
   if (vgm->configured_elog_ring_size &&
@@ -2126,6 +2127,7 @@ vlib_main (vlib_main_t * volatile vm, unformat_input_t * input)
   vec_set_len (vm->pending_rpc_requests, 0);
   vec_validate (vm->processing_rpc_requests, 0);
   vec_set_len (vm->processing_rpc_requests, 0);
+
 
   /* Default params for the buffer allocator fault injector, if configured */
   if (VLIB_BUFFER_ALLOC_FAULT_INJECTOR > 0)
