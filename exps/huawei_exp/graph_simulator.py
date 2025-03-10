@@ -6,6 +6,7 @@ import numpy as np
 import logging
 import sys
 from dataclasses import dataclass
+import random
 
 ROOT_PATH = os.path.dirname(__file__)
 CONFIG_PATH = os.path.join(ROOT_PATH, "simulator_confs")
@@ -32,7 +33,7 @@ class Node:
         self.name = name
         self.workloads = workloads
         self.profiling_data = profiling_data  # 存储性能数据 (DataFrame)
-        self.next_nodes = []  # 存储下一跳节点名称
+        self.next_nodes = {}  # 存储下一跳节点名称
         self.batch_size = batch_size
 
 class NodeGraph:
@@ -90,7 +91,7 @@ class NodeGraph:
 
         # 初始化入度和邻接表
         for node in self.node_dict.values():
-            for next_node_name in node.next_nodes:
+            for next_node_name in node.next_nodes.keys():
                 adjacency_list[node.name].append(next_node_name)
                 in_degree[next_node_name] += 1
 
@@ -121,7 +122,62 @@ class NodeGraph:
                 if workload_name in node.workloads:
                     path.append(node)
             self.workload_paths[workload_name] = path
-        
+
+class PhantomBatchInput:
+    def __init__(self, input_seq, workload_types):
+        self.workloads = workload_types
+        self.batch_input_queue = deque()
+        last_type = None
+        last_cnt = 0
+        for pkt in input_seq:
+            if pkt not in self.workloads:
+                continue
+            if last_type is None or last_type == pkt:
+                #the same type of pkts 
+                last_cnt += 1
+                last_type = pkt
+            else: 
+                self.batch_input_queue.append([last_type, last_cnt])
+                last_type = pkt 
+                last_cnt = 1
+        if last_cnt > 0:
+            self.batch_input_queue.append([last_type, last_cnt])
+    
+    def _reuse_pkts(self, nb, pkt_type):
+        if len(self.batch_input_queue) == 0: 
+            #new batch of pkts
+            self.batch_input_queue.append([pkt_type, nb])
+        else: 
+            last_batch = self.batch_input_queue[-1]
+            if last_batch[0] == pkt_type: 
+                last_batch[1] += nb
+            else:
+                #new batch of pkts
+                self.batch_input_queue.append([pkt_type, nb])
+    
+    def get_pkts(self, nb):
+        # return {'A': nb1, 'B': nb2}
+        pkts_dict = {item: 0 for item in self.workloads}
+        #print(pkts_dict)
+        while nb > 0:
+            batch_of_pkts = self.batch_input_queue[0]
+            pkt_type = batch_of_pkts[0]
+            #print(pkt_type)
+            if batch_of_pkts[1] < nb: 
+                pkt_nb = batch_of_pkts[1]
+                nb -=  pkt_nb
+                pkts_dict[pkt_type] += pkt_nb
+                self.batch_input_queue.popleft()
+                self._reuse_pkts(pkt_nb, pkt_type)
+            else: 
+                batch_of_pkts[1] -= nb
+                if batch_of_pkts[1] == 0:
+                    self.batch_input_queue.popleft()
+                self._reuse_pkts(nb, pkt_type)
+                pkts_dict[pkt_type] += nb
+                nb = 0
+        return pkts_dict
+                
 class SimuStat: 
     def __init__(self):
         self.time_ns = 0
@@ -130,7 +186,7 @@ class SimuStat:
 
 class Simulator:
     class NodeRuntime:
-        def __init__(self, node: Node, graph: NodeGraph, basic_config):
+        def __init__(self, node: Node, graph: NodeGraph, basic_config, pkt_seq):
             self.pkts = 0
             self.node = node 
             self.process_fn = self._build_process_fn(node) 
@@ -141,25 +197,12 @@ class Simulator:
             #for latencies
             self.enqueue_ts_queue = deque() 
             self.queue_process_latencies = []
-            workload_weights = []
-            workload_dict = graph.workloads
-            for next_name in node.next_nodes: 
-                next_node = graph.node_dict[next_name]
-                weight = 0
-                for next_w_type in next_node.workloads:
-                    if next_w_type in node.workloads:
-                        weight += workload_dict[next_w_type]
-                workload_weights.append(weight)
-            
-            _workload_weights = np.array(workload_weights)
-            total = _workload_weights.sum()
-            self.next_ratio = (_workload_weights / total).tolist()
+            self.phantom_input = PhantomBatchInput(pkt_seq, self.node.workloads)
             
             logging.debug("node runtime %s init finish, summary: "%self.node.name)
             logging.debug("batchsize: %d"%self.node.batch_size)
             if len(self.node.next_nodes) > 0:
                 logging.debug(self.node.next_nodes)
-                logging.debug(self.next_ratio)
             
             
         def _build_process_fn(self, node: Node):
@@ -171,9 +214,17 @@ class Simulator:
             return process_fn
         
         def build_nexts_runtime(self, runtime_dict): 
-            self.next_runtimes = []
-            for next_name in self.node.next_nodes: 
-                self.next_runtimes.append(runtime_dict[next_name])
+            self.next_runtimes_dict = {}  #key: workload_type, value: runtime 
+            for next_name, w_list in self.node.next_nodes.items():
+                next_r = runtime_dict[next_name]
+                for w in w_list: 
+                    if w in self.next_runtimes_dict.keys():
+                            logging.error("error! %s current runtime_dict exist!"%self.node.name)
+                            logging.error("try to insert %s (workload type): %s (runtime)"%(w, next_name))
+                            for __w, __r in self.next_runtimes_dict.items():
+                                logging.error("%s (workload): %s (runtime)"%(__w, __r.node.name))
+                            assert w not in self.next_runtimes_dict.keys()
+                    self.next_runtimes_dict[w] = next_r
         
         def enqueue_pkts(self, nb, stat: SimuStat):
             self.enqueue_ts_queue.append([nb, stat.time_ns])
@@ -182,11 +233,15 @@ class Simulator:
             overhead_ns = self.basic_config.enq_overhead_fix_ns + nb * self.basic_config.enq_overhead_per_pkt_ns
             stat.time_ns += overhead_ns
             stat.overhead_ns += overhead_ns
-            logging.debug('节点: %s, 入队 %f 数据包, 耗时 %d (ns), 当前总时间: %d (ns)'%(self.node.name, nb, overhead_ns, stat.time_ns,))
+            logging.debug('节点: %s, 入队 %d 数据包, 耗时 %d (ns), 当前总时间: %d (ns)'%(self.node.name, nb, overhead_ns, stat.time_ns,))
         
         def _put_to_nexts(self, nb_all, stat: SimuStat):
-            for next_r, ratio in zip(self.next_runtimes, self.next_ratio):
-                next_r.enqueue_pkts(nb_all * ratio, stat)
+            pkts_dict = self.phantom_input.get_pkts(nb_all)
+            #print(pkts_dict)
+            for w, r in self.next_runtimes_dict.items():
+                nb_w = pkts_dict[w]
+                if nb_w != 0:
+                    r.enqueue_pkts(nb_w, stat)
         
         def process_pkts(self, stat: SimuStat):
             to_be_process = 0
@@ -196,9 +251,10 @@ class Simulator:
                 to_be_process = self.node.batch_size
                 if self.node.batch_size == 0:  
                     # 0 代表不用攒包
-                    to_be_process = min(self.basic_config.max_batchsize, np.floor(self.pkts).astype(int))
-                if to_be_process == 0:
-                    break
+                    to_be_process = min(self.basic_config.max_batchsize, self.pkts)
+                    
+                assert to_be_process >= 1
+                
                 stat.time_ns += self.basic_config.dispath_overhead_ns
                 stat.overhead_ns += self.basic_config.dispath_overhead_ns
                 time_ns = self.process_fn(to_be_process)
@@ -207,7 +263,7 @@ class Simulator:
                 logging.debug('节点: %s, 处理 %d 数据包, 耗时 %d (ns), 当前总时间: %d (ns)'%(self.node.name, to_be_process, time_ns, stat.time_ns))
                 
                 to_be_poped = to_be_process
-                while to_be_poped >= 1e-6: 
+                while to_be_poped > 0: 
                     #pop queue time 
                     enq_item = self.enqueue_ts_queue[0]
                     lat_ns = stat.time_ns - enq_item[1]
@@ -218,7 +274,7 @@ class Simulator:
                     else:
                         enq_item[0] -= to_be_poped
                         to_be_poped = 0
-                        if enq_item[0] <= 1e-6:
+                        if enq_item[0] == 0:
                            self.enqueue_ts_queue.popleft() 
                 
                 self._put_to_nexts(to_be_process, stat)
@@ -226,7 +282,7 @@ class Simulator:
                     stat.pkts += to_be_process
                 
         
-    def __init__(self, config_path):
+    def __init__(self, config_path, pkt_num = 30000):
         config_file = os.path.join(config_path, "config.json")  # JSON 配置文件路径
         profiling_file = os.path.join(config_path, "profiling.csv")  # 节点性能文件路径
         input_io_file = os.path.join(config_path, "input.csv")  # 输入 IO 文件路径
@@ -237,6 +293,14 @@ class Simulator:
         self.input_time_us_fn = self._built_input_time_us_fn() 
         self.input_packet_fn = self._build_input_packet_fn()
         self.basic_config = BasicConf(**config["basic_config"])
+        
+        workload_type = []
+        workload_weight = []
+        
+        for t, w in self.graph.workloads.items():
+            workload_type.append(t)
+            workload_weight.append(w)
+        self.pkt_seq = random.choices(workload_type, weights=workload_weight, k=pkt_num)
 
     def _built_input_time_us_fn(self):
         def input_time_us_nf(time_us):
@@ -271,7 +335,6 @@ class Simulator:
             for n in path:
                 r = node_runtimes_dict[n.name]
                 assert len(r.queue_process_latencies) != 0
-                print(r.node.name, r.queue_process_latencies)
                 lat_percentile = np.percentile(np.array(r.queue_process_latencies), percentile)
                 lat += lat_percentile
                 lat_list.append((n.name, lat_percentile))
@@ -282,7 +345,7 @@ class Simulator:
             latencies[workload_name] = (lat, lat_list)
         return latencies
     
-    def run(self, total_pkts):
+    def run(self):
         # return throughput
 
         last_io_ns = 0
@@ -291,10 +354,11 @@ class Simulator:
         logging.debug("Simulation init")
         node_runtimes_dict = {}
         node_runtimes = []
-        input_runtime = None 
+        input_runtime = None
+ 
         for node in self.graph.nodes:
             logging.debug("init node runtime %s"%node.name)
-            r = Simulator.NodeRuntime(node, self.graph, self.basic_config)
+            r = Simulator.NodeRuntime(node, self.graph, self.basic_config, self.pkt_seq)
             node_runtimes.append(r)        
             node_runtimes_dict[node.name] = r
             if node.name == "ethernet-input":
@@ -305,9 +369,9 @@ class Simulator:
             
         stat = SimuStat()
         logging.debug("start simulation")
-        while stat.pkts < total_pkts:
+        while stat.pkts < len(self.pkt_seq):
             process_time_ns = stat.time_ns - last_io_ns
-            input_pkts = self.input_packet_fn(np.round(process_time_ns / 1000))
+            input_pkts = np.floor(self.input_packet_fn(np.round(process_time_ns / 1000))).astype(int)
             input_ns = self.input_time_us_fn(np.round(process_time_ns / 1000)) * 1000
             stat.time_ns += input_ns
             last_io_ns = stat.time_ns
@@ -321,32 +385,32 @@ class Simulator:
         # logging.info("totalpkts: %d"%stat.pkts)
         # logging.info("overhead_ns: %d"%stat.overhead_ns)
         # logging.info("overhead: %f"%(stat.overhead_ns/stat.time_ns))
-        return stat.pkts / (stat.time_ns / 1E9), self._get_latency(node_runtimes_dict, 90)
+        return stat.pkts / (stat.time_ns / 1E9), self._get_latency(node_runtimes_dict, 95)
                  
 
 # 示例用法
 if __name__ == "__main__":
-    s = Simulator(CONFIG_PATH)
+    s = Simulator(CONFIG_PATH, 50000)
     for n in s.graph.nodes: 
         print(n.name)
-    for batchsize in [32]:
+    for batchsize in [256]:
         s.set_batch_all(0)
         s.set_batch({
-            # "ip6-input": batchsize,
-            # "ip4-input-no-checksum" : batchsize,
-            # "nat44-ed-in2out": batchsize,
-            # "nat44-ed-in2out-slowpath" :batchsize,
+            "ip6-input": batchsize,
+            "ip4-input-no-checksum" : batchsize,
+            "nat44-ed-in2out": batchsize,
+            "nat44-ed-in2out-slowpath" :batchsize,
             "arp-input" :  batchsize,
             "ip4-receive" :  batchsize,
             "ip4-mfib-forward-lookup":  batchsize,
             "loop0-output" : batchsize
         })
-        throughput, latencies = s.run(300000)
+        throughput, latencies = s.run()
         print("%d: throughput (mpps): %f"%(batchsize, throughput/1E6))
         
         for workload_name, lat_tup in latencies.items(): 
             print("%s: %d (us)"%(workload_name, lat_tup[0]/1000))
-            print(lat_tup[1])
+            #print(lat_tup[1])
 
     # for batchsize in [0, 16, 32, 48, 64, 96, 128]:
     #     print ("############# only small %d #############"%batchsize)
