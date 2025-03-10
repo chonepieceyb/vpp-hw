@@ -1,4 +1,11 @@
 {
+    "basic_config": {
+        "max_batchsize" : 256,
+        "dispath_overhead_ns": 400,
+        "enq_overhead_fix_ns": 10,
+        "enq_overhead_per_pkt_ns": 1,
+        "check_queue_ns": 15
+    },
     "workloads": {
         "ip6": 0.4545,
         "ip4-nat": 0.2273,
@@ -271,6 +278,7 @@
                 "tap"
             ],
             "next_nodes": [
+                "l2-input"
             ],
             "batch_size":32
         },
