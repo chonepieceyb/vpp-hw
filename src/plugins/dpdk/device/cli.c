@@ -706,10 +706,10 @@ show_dpdk_overhead_and_reset_fn (vlib_main_t * vm,
     u64 total_overhead = overhead_stats.total_dispatch_time - overhead_stats.total_node_function_time;
     u64 avg_overhead = total_overhead / overhead_stats.total_dispatch_count;
     u64 avg_dispatch_time = overhead_stats.total_dispatch_time / overhead_stats.total_dispatch_count;
-    u64 avg_node_function_time = overhead_stats.total_node_function_time / overhead_stats.total_dispatch_count;
+    u64 avg_node_function_time = overhead_stats.total_node_function_time / overhead_stats.total_node_function_count;
 
-    vlib_cli_output (vm, "total_dispatch_time: %lu, total_node_function_time: %lu, total_dispatch_count: %lu, total_overhead: %lu, avg_dispatch_time: %lu, avg_node_function_time: %lu, avg_overhead: %lu",
-                      overhead_stats.total_dispatch_time, overhead_stats.total_node_function_time, overhead_stats.total_dispatch_count, total_overhead, avg_dispatch_time, avg_node_function_time, avg_overhead);
+    vlib_cli_output (vm, "total_dispatch_time: %lu, total_node_function_time: %lu, total_dispatch_count: %lu, total_node_function_count: %lu, total_overhead: %lu, avg_dispatch_time: %lu, avg_node_function_time: %lu, avg_overhead: %lu",
+                      overhead_stats.total_dispatch_time, overhead_stats.total_node_function_time, overhead_stats.total_dispatch_count, overhead_stats.total_node_function_count, total_overhead, avg_dispatch_time, avg_node_function_time, avg_overhead);
 
     // reset the statistics
     curr_vm->overhead_stats.total_dispatch_time = 0;

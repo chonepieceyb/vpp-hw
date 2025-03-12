@@ -1206,6 +1206,7 @@ dispatch_pending_node (vlib_main_t * vm, uword pending_frame_index,
   f64 node_function_end = vlib_time_now(vm);
   u64 node_function_time = (u64)(node_function_end*1e9) - (u64)(node_function_start*1e9);
   vm->overhead_stats.total_node_function_time += node_function_time;
+  vm->overhead_stats.total_node_function_count += 1;
   // overhead exp end
 
   //clib_warning("+++++++++++++++++vpp after dispatch node  pf index %lu, node runtime index %lu, node_name %v++++++++++++++", pending_frame_index, p->node_runtime_index, node_name);

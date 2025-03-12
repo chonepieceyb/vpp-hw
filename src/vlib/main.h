@@ -114,8 +114,9 @@ typedef struct {
 
 typedef struct {
   u64 total_dispatch_time;
-  u64 total_node_function_time;
   u64 total_dispatch_count;
+  u64 total_node_function_time;
+  u64 total_node_function_count;
 } overhead_statistics_t;
 
 typedef struct vlib_main_t
