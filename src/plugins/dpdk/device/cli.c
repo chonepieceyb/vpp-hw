@@ -470,7 +470,6 @@ show_packets_latency_fn (vlib_main_t * vm,
     }
   }
   // set timestamp for duration counting
-  vm->last_timestamp = vlib_time_now(vm);
   vlib_worker_thread_barrier_release (vm);
   vlib_cli_output(vm, "current time_diff(s): %.2lf", time_diff_s);
 
@@ -478,26 +477,28 @@ show_packets_latency_fn (vlib_main_t * vm,
   u64 avg_lat = 0;
   u64 avg_throughput_pkts = (u64) ((total_lat_stats.total_pkts) / time_diff_s);
   u64 avg_throughput_bytes = (u64) ((total_lat_stats.total_bytes) / time_diff_s);
+  u64 avg_timeout_pkts = (u64) (total_lat_stats.timeout_pkts / time_diff_s);
   u64 avg_throughput_bits = avg_throughput_bytes * 8;
 
   if (total_lat_stats.total_pkts != 0) {
     avg_lat = total_lat_stats.total_latency / total_lat_stats.total_pkts;
   }
-  vlib_cli_output (vm, "avg_throughput(pkt/s): %lu, avg_throughput(bits/s): %lu, avg_lat(ns): %lu, timeout_pkts: %lu, total_pkts: %lu, total_latency: %lu",
-                    avg_throughput_pkts, avg_throughput_bits, avg_lat, total_lat_stats.timeout_pkts, total_lat_stats.total_pkts, total_lat_stats.total_latency);
+  vlib_cli_output (vm, "avg_throughput(pkt/s): %lu, avg_throughput(bits/s): %lu, avg_lat(ns): %lu, avg_timeout_pkts: %lu, timeout_pkts: %lu, total_pkts: %lu, total_latency: %lu",
+                    avg_throughput_pkts, avg_throughput_bits, avg_lat, avg_timeout_pkts, total_lat_stats.timeout_pkts, total_lat_stats.total_pkts, total_lat_stats.total_latency);
 
   // print each protocol latency
   for(int i = 1; i < MAX_LATENCY_TRACE_COUNT; i++) {
     u64 avg_lat = 0;
     u64 avg_throughput_pkts = (u64) ((lat_stats[i].total_pkts) / time_diff_s);
     u64 avg_throughput_bytes = (u64) ((lat_stats[i].total_bytes) / time_diff_s);
+    u64 avg_timeout_pkts = (u64) (lat_stats[i].timeout_pkts / time_diff_s);
     u64 avg_throughput_bits = avg_throughput_bytes * 8;
 
     if (lat_stats[i].total_pkts != 0) {
       avg_lat = lat_stats[i].total_latency / lat_stats[i].total_pkts;
     }
-    vlib_cli_output (vm, "protocol_identifier: %d, avg_throughput(pkt/s): %lu, avg_throughput(bits/s): %lu, avg_lat(ns): %lu, timeout_pkts: %lu, total_pkts: %lu, total_latency: %lu",
-                      i, avg_throughput_pkts, avg_throughput_bits, avg_lat, lat_stats[i].timeout_pkts, lat_stats[i].total_pkts, lat_stats[i].total_latency);
+    vlib_cli_output (vm, "protocol_identifier: %d, avg_throughput(pkt/s): %lu, avg_throughput(bits/s): %lu, avg_lat(ns): %lu, avg_timeout_pkts: %lu, timeout_pkts: %lu, total_pkts: %lu, total_latency: %lu",
+                      i, avg_throughput_pkts, avg_throughput_bits, avg_lat, avg_timeout_pkts, lat_stats[i].timeout_pkts, lat_stats[i].total_pkts, lat_stats[i].total_latency);
   }
   return 0;
 }
@@ -573,26 +574,28 @@ show_packets_latency_and_reset_fn (vlib_main_t * vm,
   u64 avg_lat = 0;
   u64 avg_throughput_pkts = (u64) ((total_lat_stats.total_pkts) / time_diff_s);
   u64 avg_throughput_bytes = (u64) ((total_lat_stats.total_bytes) / time_diff_s);
+  u64 avg_timeout_pkts = (u64) (total_lat_stats.timeout_pkts / time_diff_s);
   u64 avg_throughput_bits = avg_throughput_bytes * 8;
 
   if (total_lat_stats.total_pkts != 0) {
     avg_lat = total_lat_stats.total_latency / total_lat_stats.total_pkts;
   }
-  vlib_cli_output (vm, "avg_throughput(pkt/s): %lu, avg_throughput(bits/s): %lu, avg_lat(ns): %lu, timeout_pkts: %lu, total_pkts: %lu, total_latency: %lu",
-                    avg_throughput_pkts, avg_throughput_bits, avg_lat, total_lat_stats.timeout_pkts, total_lat_stats.total_pkts, total_lat_stats.total_latency);
+  vlib_cli_output (vm, "avg_throughput(pkt/s): %lu, avg_throughput(bits/s): %lu, avg_lat(ns): %lu, avg_timeout_pkts: %lu, timeout_pkts: %lu, total_pkts: %lu, total_latency: %lu",
+                    avg_throughput_pkts, avg_throughput_bits, avg_lat, avg_timeout_pkts, total_lat_stats.timeout_pkts, total_lat_stats.total_pkts, total_lat_stats.total_latency);
 
   // print each protocol latency
   for(int i = 1; i < MAX_LATENCY_TRACE_COUNT; i++) {
     u64 avg_lat = 0;
     u64 avg_throughput_pkts = (u64) ((lat_stats[i].total_pkts) / time_diff_s);
     u64 avg_throughput_bytes = (u64) ((lat_stats[i].total_bytes) / time_diff_s);
+    u64 avg_timeout_pkts = (u64) (lat_stats[i].timeout_pkts / time_diff_s);
     u64 avg_throughput_bits = avg_throughput_bytes * 8;
 
     if (lat_stats[i].total_pkts != 0) {
       avg_lat = lat_stats[i].total_latency / lat_stats[i].total_pkts;
     }
-    vlib_cli_output (vm, "protocol_identifier: %d, avg_throughput(pkt/s): %lu, avg_throughput(bits/s): %lu, avg_lat(ns): %lu, timeout_pkts: %lu, total_pkts: %lu, total_latency: %lu",
-                      i, avg_throughput_pkts, avg_throughput_bits, avg_lat, lat_stats[i].timeout_pkts, lat_stats[i].total_pkts, lat_stats[i].total_latency);
+    vlib_cli_output (vm, "protocol_identifier: %d, avg_throughput(pkt/s): %lu, avg_throughput(bits/s): %lu, avg_lat(ns): %lu, avg_timeout_pkts: %lu, timeout_pkts: %lu, total_pkts: %lu, total_latency: %lu",
+                      i, avg_throughput_pkts, avg_throughput_bits, avg_lat, avg_timeout_pkts, lat_stats[i].timeout_pkts, lat_stats[i].total_pkts, lat_stats[i].total_latency);
   }
   return 0;
 }
