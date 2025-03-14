@@ -38,7 +38,24 @@ def process_csv(file_path, length=10):
             node_setting = {}
             print(f"{command}")
 
+def generate_from_array(arr):
+    node_list = [
+        "ip6-input",
+        "ip4-input-no-checksum",
+        "nat44-ed-in2out",
+        "nat44-ed-in2out-slowpath",
+        "arp-input",
+        "ip4-icmp-input",
+        "ip4-mfib-forward-lookup",
+        "loop0-output",
+    ]
+    str = "set node batch"
+    for i in range(0, 8):
+        str += f" {node_list[i]} size {arr[i]} timeout 200"
 
+    print(str)
 
 if __name__ == '__main__':
-    process_csv('command.csv', 2)
+    # process_csv('command.csv', 2)
+    arr = [176, 96, 144, 160,  96,  32,  64,  64]
+    generate_from_array(arr)
