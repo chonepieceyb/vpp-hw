@@ -23,7 +23,7 @@ nodes = [
          'ip4-receive', 'ip4-icmp-input', 'ip4-icmp-echo-request', 'ip4-icmp-echo-request', 'ip4-load-balance', 
          'ip4-mfib-forward-lookup', 'ip4-mfib-forward-rpf', 'ip4-drop', 'error-drop', 'drop', 
          'loop0-output','l2-input', 'l2-fwd', 'l2-output', 'tap0-output', 
-         # 调节TX节点偶尔会导致VPP崩溃，暂时不调
+        # 调节TX节点偶尔会导致VPP崩溃，暂时不，通过调节其上游output节点实现
         #  'tap0-tx', 'loop0-tx', 'Ethernet1-tx',
          ]
 batch_sizes = range(1, 256+1, 1)
@@ -297,6 +297,13 @@ def record_exp_data():
                 reset_stats()
                 time.sleep(duration)
                 get_stats(key_tuple)
+                if node == 'loop0-output':
+                    get_stats(('loop0-tx', batch_size, timeout))
+                if node == 'tap0-output':
+                    get_stats(('tap0-tx', batch_size, timeout))
+                if node == 'Ethernet1-output':
+                    get_stats(('Ethernet1-tx', batch_size, timeout))
+                
 
 
 if __name__ == "__main__":
